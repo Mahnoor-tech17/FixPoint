@@ -1,0 +1,46 @@
+const dotenv = require("dotenv");
+const bcrypt = require("bcryptjs");
+const ConnectToDB = require("../models/db");
+const UserModel = require("../models/userModel");
+
+dotenv.config();
+
+const createAdmin = async () => {
+  try {
+    await ConnectToDB();
+
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+
+    if (!email || !password) {
+      throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD must be set in .env");
+    }
+
+    const existingAdmin = await UserModel.findOne({ email: email.toLowerCase() });
+
+    if (existingAdmin) {
+      console.log("Admin already exists");
+      process.exit(0);
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await UserModel.create({
+      firstName: "FixPoint",
+      lastName: "Admin",
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role: "ADMIN",
+      isVerified: true,
+    });
+
+    console.log("Admin created successfully");
+    console.log("Email:", email);
+    process.exit(0);
+  } catch (error) {
+    console.error("Admin creation error:", error.message);
+    process.exit(1);
+  }
+};
+
+createAdmin();

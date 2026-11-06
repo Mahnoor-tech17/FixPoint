@@ -1,0 +1,32 @@
+{
+  "name": "fixpoint-backend",
+  "version": "1.0.0",
+  "description": "Backend API for FixPoint Service Booking & Management Platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "create-admin": "node scripts/createAdmin.js",
+    "seed-categories": "node scripts/seedCategories.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "*",
+    "cors": "*",
+    "dotenv": "*",
+    "express": "^5.0.0",
+    "express-rate-limit": "*",
+    "helmet": "*",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "*",
+    "morgan": "*",
+    "multer": "*",
+    "node-cron": "*",
+    "nodemailer": "^10.3.1",
+    "stripe": "^23.1.0",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "nodemon": "*"
+  }
+}

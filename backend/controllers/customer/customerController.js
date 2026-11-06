@@ -5,6 +5,7 @@ const PaymentModel = require("../../models/paymentModel");
 const { BOOKING_FEE, CURRENCY, SLOT_HOLD_MINUTES } = require("../../config/fees");
 const { createCheckoutSession } = require("../../services/stripeService");
 const { getPKTNow, toMinutes, generateAvailableSlots } = require("../../services/slotService");
+const { getNextSequence } = require("../../models/counterModel");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
@@ -186,15 +187,21 @@ const createCustomerBooking = async (req, res) => {
     // 3. Check for existing active booking or hold
     const now = new Date();
     const existingConflict = await BookingModel.findOne({
-      $or: [{ provider: provider._id }, { providerId: provider._id }],
-      date,
-      $or: [
-        { slotStart, slotEnd },
-        { startTime: slotStart, endTime: slotEnd },
-      ],
-      $or: [
-        { status: "confirmed" },
-        { status: "pending_payment", slotHoldExpiresAt: { $gt: now } },
+      $and: [
+        { $or: [{ provider: provider._id }, { providerId: provider._id }] },
+        { date },
+        {
+          $or: [
+            { slotStart, slotEnd },
+            { startTime: slotStart, endTime: slotEnd },
+          ],
+        },
+        {
+          $or: [
+            { status: "confirmed" },
+            { status: "pending_payment", slotHoldExpiresAt: { $gt: now } },
+          ],
+        },
       ],
     });
 
@@ -226,7 +233,11 @@ const createCustomerBooking = async (req, res) => {
     };
 
     // 5. Create Booking in pending_payment state with 10-min hold
+    const seq = await getNextSequence("booking");
+    const bookingId = `FP-${String(seq).padStart(6, "0")}`;
+
     const booking = await BookingModel.create({
+      bookingId,
       customer: req.user.userId,
       customerId: req.user.userId,
       provider: provider._id,
@@ -265,24 +276,33 @@ const createCustomerBooking = async (req, res) => {
       status: "pending",
     });
 
-    // 7. Create Stripe Checkout Session
-    const session = await createCheckoutSession({
-      amount: BOOKING_FEE,
-      currency: CURRENCY || "pkr",
-      name: `FixPoint Booking Fee - ${provider.firstName} ${provider.lastName}`,
-      successUrl: `${FRONTEND_URL}/customer/payment-success?session_id={CHECKOUT_SESSION_ID}&booking_id=${booking._id}`,
-      cancelUrl: `${FRONTEND_URL}/customer/payment-cancelled?booking_id=${booking._id}`,
-      metadata: {
-        type: "booking_fee",
-        paymentType: "booking_fee",
-        userId: req.user.userId.toString(),
-        customerId: req.user.userId.toString(),
-        providerId: provider._id.toString(),
-        bookingId: booking._id.toString(),
-        paymentId: payment._id.toString(),
-      },
-      customerEmail: req.user.email,
-    });
+    // 7. Create Stripe Checkout Session (release the slot hold if Stripe fails)
+    let session;
+    try {
+      session = await createCheckoutSession({
+        amount: BOOKING_FEE,
+        currency: CURRENCY || "pkr",
+        name: `FixPoint Booking Fee - ${provider.firstName} ${provider.lastName}`,
+        successUrl: `${FRONTEND_URL}/customer/payment-success?session_id={CHECKOUT_SESSION_ID}&booking_id=${booking._id}`,
+        cancelUrl: `${FRONTEND_URL}/customer/payment-cancelled?booking_id=${booking._id}`,
+        metadata: {
+          type: "booking_fee",
+          paymentType: "booking_fee",
+          userId: req.user.userId.toString(),
+          customerId: req.user.userId.toString(),
+          providerId: provider._id.toString(),
+          bookingId: booking._id.toString(),
+          paymentId: payment._id.toString(),
+        },
+        customerEmail: req.user.email,
+      });
+    } catch (stripeError) {
+      booking.status = "expired";
+      await booking.save();
+      payment.status = "failed";
+      await payment.save();
+      throw stripeError;
+    }
 
     payment.stripeSessionId = session.id;
     await payment.save();
@@ -454,7 +474,7 @@ const getCustomerBookings = async (req, res) => {
     const { scope, status, page = 1, limit = 20 } = req.query;
 
     const query = {
-      $or: [{ customer: req.user.userId }, { customerId: req.user.userId }],
+      $and: [{ $or: [{ customer: req.user.userId }, { customerId: req.user.userId }] }],
     };
 
     const pktNow = getPKTNow();
@@ -463,13 +483,15 @@ const getCustomerBookings = async (req, res) => {
       query.status = status;
     } else if (scope === "upcoming") {
       query.status = { $in: ["confirmed", "pending_payment"] };
-      query.$or = [
-        { date: { $gt: pktNow.date } },
-        { date: pktNow.date, slotEnd: { $gte: pktNow.time } },
-        { date: pktNow.date, endTime: { $gte: pktNow.time } },
-      ];
+      query.$and.push({
+        $or: [
+          { date: { $gt: pktNow.date } },
+          { date: pktNow.date, slotEnd: { $gte: pktNow.time } },
+          { date: pktNow.date, endTime: { $gte: pktNow.time } },
+        ],
+      });
     } else if (scope === "past") {
-      query.$or = [
+      query.$and.push({ $or: [
         { status: { $in: ["completed", "cancelled", "no-show", "no_show", "expired"] } },
         {
           status: "confirmed",
@@ -479,7 +501,7 @@ const getCustomerBookings = async (req, res) => {
             { date: pktNow.date, endTime: { $lt: pktNow.time } },
           ],
         },
-      ];
+      ] });
     }
 
     const sortOrder = scope === "upcoming" ? { date: 1, slotStart: 1 } : { date: -1, slotStart: -1 };

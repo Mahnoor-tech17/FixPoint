@@ -113,7 +113,7 @@ export default function AdminPayments() {
               <CreditCard className="h-4 w-4 text-amber-700" />
             </div>
             <p className="text-2xl font-extrabold text-ink">{formatPKR(totals.bookingFees)}</p>
-            <p className="text-xs text-amber-700 mt-1">Customer Rs 100 fees collected</p>
+            <p className="text-xs text-amber-700 mt-1">Customer Rs 200 fees collected</p>
           </div>
 
           <div className="rounded-3xl bg-pastel-pink p-6 border border-rose-200 shadow-xs">

@@ -256,7 +256,7 @@ export default function CustomerBookings() {
                           ) : (
                             <CreditCard className="h-4 w-4" />
                           )}
-                          Pay Rs 100 Fee Now
+                          Pay Rs 200 Fee Now
                         </button>
                       )}
 
@@ -291,7 +291,7 @@ export default function CustomerBookings() {
                   <p className="font-bold">Important Cancellation Policy:</p>
                   <p className="mt-0.5 leading-relaxed text-amber-800">
                     Bookings can only be cancelled at least 24 hours prior to the scheduled slot.
-                    The Rs 100 platform booking fee is non-refundable upon customer cancellation.
+                    The Rs 200 platform booking fee is non-refundable upon customer cancellation.
                   </p>
                 </div>
               </div>

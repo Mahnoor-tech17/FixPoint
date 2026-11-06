@@ -68,7 +68,7 @@ export default function ProviderBookings() {
           { reason: cancelReason.trim() }
         );
         if (res.data?.success) {
-          toast.success("Booking cancelled and Rs 100 booking fee refunded to customer.");
+          toast.success("Booking cancelled and Rs 200 booking fee refunded to customer.");
           setActionModal(null);
           fetchBookings();
         }
@@ -274,7 +274,7 @@ export default function ProviderBookings() {
                             }
                             className="inline-flex items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition"
                           >
-                            <XCircle className="h-4 w-4" /> Cancel (Refund Rs 100)
+                            <XCircle className="h-4 w-4" /> Cancel (Refund Rs 200)
                           </button>
                         </>
                       )}
@@ -303,7 +303,7 @@ export default function ProviderBookings() {
               {actionModal.action === "cancel" ? (
                 <>
                   <p className="text-sm text-slate-600">
-                    Cancelling this booking will immediately refund the Rs 100 booking fee to the customer via Stripe. Please provide a brief cancellation reason:
+                    Cancelling this booking will immediately refund the Rs 200 booking fee to the customer via Stripe. Please provide a brief cancellation reason:
                   </p>
                   <div>
                     <label className="block text-xs font-bold uppercase text-slate-600 mb-1">

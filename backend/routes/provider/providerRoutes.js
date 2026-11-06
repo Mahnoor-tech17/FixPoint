@@ -12,6 +12,7 @@ const {
   updateAvailability,
   getPaymentStatus,
   createRegistrationFeeCheckout,
+  verifyRegistrationFee,
   getProviderBookings,
   updateProviderBookingStatus,
   cancelProviderBooking,
@@ -37,6 +38,7 @@ router.put("/availability", updateAvailability);
 // Registration fee (Rs 500)
 router.get("/payment-status", getPaymentStatus);
 router.post("/registration-fee/checkout", createRegistrationFeeCheckout);
+router.get("/registration-fee/verify", verifyRegistrationFee);
 
 // Bookings
 router.get("/bookings", getProviderBookings);

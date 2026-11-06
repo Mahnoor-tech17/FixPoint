@@ -5,7 +5,7 @@ const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
 const PaymentModel = require("../../models/paymentModel");
 const { PROVIDER_REGISTRATION_FEE, CURRENCY } = require("../../config/fees");
-const { createCheckoutSession, refundPayment } = require("../../services/stripeService");
+const { createCheckoutSession, refundPayment, getStripe } = require("../../services/stripeService");
 const { getPKTNow, toMinutes } = require("../../services/slotService");
 
 const SAFE_FIELDS =
@@ -543,6 +543,47 @@ const createRegistrationFeeCheckout = async (req, res) => {
   }
 };
 
+// ================= VERIFY REGISTRATION FEE (fallback when webhook is slow/missing) =================
+const verifyRegistrationFee = async (req, res) => {
+  try {
+    const provider = await findProvider(req, res);
+    if (!provider) return;
+
+    const { session_id } = req.query;
+    if (!session_id) {
+      return res.status(400).json({ success: false, message: "session_id missing" });
+    }
+
+    const session = await getStripe().checkout.sessions.retrieve(session_id);
+
+    if (session.metadata?.userId !== provider._id.toString()) {
+      return res.status(403).json({ success: false, message: "Session does not belong to you" });
+    }
+    if (session.payment_status !== "paid") {
+      return res.json({ success: false, status: session.payment_status });
+    }
+
+    const payment = await PaymentModel.findOne({ stripeSessionId: session.id });
+    if (payment && payment.status !== "paid") {
+      payment.status = "paid";
+      payment.paidAt = new Date();
+      payment.stripePaymentIntentId = session.payment_intent || payment.stripePaymentIntentId;
+      await payment.save();
+    }
+
+    if (!provider.registrationFeePaid) {
+      provider.registrationFeePaid = true;
+      provider.registrationFeePaidAt = new Date();
+      await provider.save();
+    }
+
+    return res.json({ success: true, status: "paid" });
+  } catch (error) {
+    console.error("verifyRegistrationFee error:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // ================= PROVIDER BOOKINGS (Task 6) =================
 const getProviderBookings = async (req, res) => {
   try {
@@ -754,6 +795,7 @@ module.exports = {
   updateAvailability,
   getPaymentStatus,
   createRegistrationFeeCheckout,
+  verifyRegistrationFee,
   getProviderBookings,
   updateProviderBookingStatus,
   cancelProviderBooking,

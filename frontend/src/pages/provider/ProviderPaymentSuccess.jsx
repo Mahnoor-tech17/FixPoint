@@ -54,12 +54,21 @@ export default function ProviderPaymentSuccess() {
   const [payment, setPayment] = useState(null);
 
   useEffect(() => {
+    const sessionId = new URLSearchParams(window.location.search).get("session_id");
     let attempts = 0;
     const maxAttempts = 10;
 
     const checkStatus = async () => {
       attempts++;
       try {
+        // Verify directly with Stripe (works even if the webhook did not arrive)
+        if (sessionId) {
+          try {
+            await httpClient.get(`/provider/registration-fee/verify?session_id=${sessionId}`);
+          } catch (verifyErr) {
+            console.error("Payment verify error:", verifyErr);
+          }
+        }
         const res = await httpClient.get("/provider/payment-status");
         if (res.data?.success && res.data.registrationFeePaid) {
           setConfirmed(true);

@@ -62,7 +62,7 @@ function ReceiptView({ payment, booking, user }) {
         </div>
       ))}
       <div className="pt-2 border-t border-black/5 text-[11px] text-slate-500">
-        Note: The Rs 100 booking fee is paid via FixPoint. Actual service charges are settled directly with the provider upon service completion.
+        Note: The Rs 200 booking fee is paid via FixPoint. Actual service charges are settled directly with the provider upon service completion.
       </div>
     </div>
   );
@@ -145,7 +145,7 @@ export default function CustomerPaymentSuccess() {
               </div>
               <h2 className="text-2xl font-extrabold text-ink">Confirming Your Booking...</h2>
               <p className="text-sm text-slate-500">
-                Please wait a moment while we verify your Rs 100 booking fee payment with Stripe.
+                Please wait a moment while we verify your Rs 200 booking fee payment with Stripe.
               </p>
             </div>
           ) : (
@@ -156,7 +156,7 @@ export default function CustomerPaymentSuccess() {
                 </div>
                 <h2 className="text-2xl font-extrabold text-ink">Booking Confirmed!</h2>
                 <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                  Thank you! Your payment of <strong className="text-ink">Rs 100</strong> has been verified. Your service appointment is now locked in.
+                  Thank you! Your payment of <strong className="text-ink">Rs 200</strong> has been verified. Your service appointment is now locked in.
                 </p>
               </div>
 

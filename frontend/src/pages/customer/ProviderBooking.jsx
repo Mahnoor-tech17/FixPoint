@@ -494,7 +494,7 @@ export default function ProviderBooking() {
                     <p className="font-bold text-ink">FixPoint Booking Fee</p>
                     <p className="text-[11px] text-slate-500">Paid online now via Stripe</p>
                   </div>
-                  <span className="text-sm font-extrabold text-ink">Rs 100</span>
+                  <span className="text-sm font-extrabold text-ink">Rs 200</span>
                 </div>
 
                 <div className="flex justify-between items-center rounded-xl bg-pastel-yellow/60 p-3 text-amber-950 border border-amber-200">
@@ -514,7 +514,7 @@ export default function ProviderBooking() {
               <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
                 <div>
                   <span className="text-xs text-slate-500 block">Total Due Now</span>
-                  <span className="text-2xl font-black text-ink">Rs 100</span>
+                  <span className="text-2xl font-black text-ink">Rs 200</span>
                 </div>
                 <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-900">
                   Holds slot for 10 min
@@ -533,14 +533,14 @@ export default function ProviderBooking() {
                     </>
                   ) : (
                     <>
-                      <CreditCard className="h-4 w-4" /> Pay Rs 100 & Book
+                      <CreditCard className="h-4 w-4" /> Pay Rs 200 & Book
                     </>
                   )}
                 </button>
               </div>
 
               <p className="mt-3 text-[11px] text-slate-400 text-center leading-relaxed">
-                By booking, you agree that the Rs 100 platform fee confirms your reserved appointment window. Actual service charges are settled with the provider.
+                By booking, you agree that the Rs 200 platform fee confirms your reserved appointment window. Actual service charges are settled with the provider.
               </p>
             </div>
           </div>

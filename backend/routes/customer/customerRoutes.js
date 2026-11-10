@@ -8,6 +8,7 @@ const {
   changePassword,
   createCustomerBooking,
   payCustomerBooking,
+  verifyBookingPayment,
   cancelCustomerBooking,
   getCustomerBookings,
   getMyPayments,
@@ -23,6 +24,7 @@ router.put("/change-password", changePassword);
 
 // Customer booking endpoints (Task 5)
 router.post("/bookings", createCustomerBooking);
+router.get("/bookings/verify-payment", verifyBookingPayment);
 router.post("/bookings/:id/pay", payCustomerBooking);
 router.post("/bookings/:id/cancel", cancelCustomerBooking);
 router.get("/bookings", getCustomerBookings);

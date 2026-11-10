@@ -148,6 +148,10 @@ const BookingSchema = new mongoose.Schema(
       default: "pending_payment",
       index: true,
     },
+    reviewed: {
+      type: Boolean,
+      default: false,
+    },
     slotHoldExpiresAt: {
       type: Date,
       index: true,

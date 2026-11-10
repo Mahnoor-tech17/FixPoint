@@ -15,6 +15,7 @@ const uploadRoutes = require("./routes/upload/uploadRoutes");
 const publicRoutes = require("./routes/public/publicRoutes");
 const bookingRoutes = require("./routes/booking/bookingRoutes");
 const reviewRoutes = require("./routes/review/reviewRoutes");
+const appReviewRoutes = require("./routes/review/appReviewRoutes");
 const settingRoutes = require("./routes/setting/settingRoutes");
 const paymentRoutes = require("./routes/payments/paymentRoutes");
 
@@ -49,6 +50,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/app-reviews", appReviewRoutes);
 app.use("/api/settings", settingRoutes);
 app.use("/api/payments", paymentRoutes);
 

@@ -71,6 +71,7 @@ function ReceiptView({ payment, booking, user }) {
 export default function CustomerPaymentSuccess() {
   const [searchParams] = useSearchParams();
   const bookingId = searchParams.get("booking_id");
+  const sessionId = searchParams.get("session_id");
   const user = getUser();
 
   const [verifying, setVerifying] = useState(true);
@@ -83,6 +84,14 @@ export default function CustomerPaymentSuccess() {
 
     const checkBookingStatus = async () => {
       attempts++;
+      // Pehle Stripe se payment verify karwao (webhook ke bina bhi booking confirm ho jaye)
+      if (sessionId) {
+        try {
+          await httpClient.get(`/customer/bookings/verify-payment?session_id=${sessionId}`);
+        } catch (err) {
+          console.error("Verify booking payment error:", err);
+        }
+      }
       try {
         const res = await httpClient.get("/customer/bookings?scope=upcoming");
         if (res.data?.success && Array.isArray(res.data.bookings)) {
@@ -132,7 +141,7 @@ export default function CustomerPaymentSuccess() {
     });
 
     return () => clearInterval(intervalId);
-  }, [bookingId]);
+  }, [bookingId, sessionId]);
 
   return (
     <CustomerLayout title="Booking Confirmed">

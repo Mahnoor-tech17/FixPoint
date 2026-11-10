@@ -591,20 +591,27 @@ const getProviderBookings = async (req, res) => {
     if (!provider) return;
 
     const { scope = "all" } = req.query;
+
+    // Provider ko sirf paid (confirmed) bookings nazar aani chahiye.
     const query = {
-      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      $and: [
+        { $or: [{ provider: provider._id }, { providerId: provider._id }] },
+        { status: { $nin: ["pending_payment", "expired"] } },
+      ],
     };
 
     const pktNow = getPKTNow();
 
     if (scope === "upcoming") {
-      query.status = { $in: ["confirmed", "pending_payment"] };
-      query.date = { $gte: pktNow.date };
+      query.$and.push({ status: "confirmed" });
+      query.$and.push({ date: { $gte: pktNow.date } });
     } else if (scope === "past") {
-      query.$or = [
-        { status: { $in: ["completed", "cancelled", "no-show", "no_show", "expired"] } },
-        { date: { $lt: pktNow.date } },
-      ];
+      query.$and.push({
+        $or: [
+          { status: { $in: ["completed", "cancelled", "no-show", "no_show"] } },
+          { date: { $lt: pktNow.date } },
+        ],
+      });
     }
 
     const bookings = await BookingModel.find(query)

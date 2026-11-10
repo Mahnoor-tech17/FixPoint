@@ -3,7 +3,7 @@ const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
 const PaymentModel = require("../../models/paymentModel");
 const { BOOKING_FEE, CURRENCY, SLOT_HOLD_MINUTES } = require("../../config/fees");
-const { createCheckoutSession } = require("../../services/stripeService");
+const { createCheckoutSession, getStripe } = require("../../services/stripeService");
 const { getPKTNow, toMinutes, generateAvailableSlots } = require("../../services/slotService");
 const { getNextSequence } = require("../../models/counterModel");
 
@@ -598,12 +598,78 @@ const getMyPayments = async (req, res) => {
   }
 };
 
+
+// Webhook ke bina bhi booking confirm karne ke liye: Stripe se session poochh kar status update karta hai
+const verifyBookingPayment = async (req, res) => {
+  try {
+    const { session_id } = req.query;
+    if (!session_id) {
+      return res.status(400).json({ success: false, message: "session_id missing" });
+    }
+
+    const session = await getStripe().checkout.sessions.retrieve(session_id);
+    const meta = session.metadata || {};
+
+    if (meta.type !== "booking_fee" || meta.userId !== String(req.user.userId)) {
+      return res.status(403).json({ success: false, message: "Session does not belong to you" });
+    }
+    if (session.payment_status !== "paid") {
+      return res.json({ success: false, status: session.payment_status });
+    }
+
+    const payment = await PaymentModel.findOne({ stripeSessionId: session.id });
+    if (payment && payment.status !== "paid") {
+      payment.status = "paid";
+      payment.paidAt = new Date();
+      payment.stripePaymentIntentId = session.payment_intent || payment.stripePaymentIntentId;
+      await payment.save();
+    }
+
+    const booking = await BookingModel.findById(meta.bookingId);
+    if (!booking) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (booking.status === "pending_payment") {
+      booking.status = "confirmed";
+      booking.slotHoldExpiresAt = undefined;
+      await booking.save();
+    } else if (booking.status === "expired") {
+      // Paid hone ke baad hold expire ho gaya ho: slot khali ho to confirm kar do
+      const clash = await BookingModel.findOne({
+        _id: { $ne: booking._id },
+        $and: [
+          { $or: [{ provider: booking.provider }, { providerId: booking.provider }] },
+          { date: booking.date },
+          { $or: [{ slotStart: booking.slotStart }, { startTime: booking.slotStart }] },
+          { status: "confirmed" },
+        ],
+      });
+      if (clash) {
+        return res.status(409).json({
+          success: false,
+          message: "Payment received but slot was taken. Please contact support for a refund.",
+        });
+      }
+      booking.status = "confirmed";
+      booking.slotHoldExpiresAt = undefined;
+      await booking.save();
+    }
+
+    return res.json({ success: true, status: booking.status });
+  } catch (error) {
+    console.error("verifyBookingPayment error:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
   changePassword,
   createCustomerBooking,
   payCustomerBooking,
+  verifyBookingPayment,
   cancelCustomerBooking,
   getCustomerBookings,
   getMyPayments,

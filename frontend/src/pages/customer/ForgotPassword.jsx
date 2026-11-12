@@ -1,8 +1,18 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { z } from "zod";
 import { toast } from "sonner";
 import AuthLayout from "../../components/common/AuthLayout";
 import { getErrorMessage, httpClient } from "../../lib/http";
+
+const forgotSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .min(1, "Email is required")
+    .max(100, "Email is too long")
+    .email("Enter a valid email address"),
+});
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -12,15 +22,16 @@ export default function ForgotPassword() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!email.trim()) {
-      toast.error("Email is required");
+    const result = forgotSchema.safeParse({ email });
+    if (!result.success) {
+      toast.error(result.error.issues[0].message);
       return;
     }
 
     setLoading(true);
     try {
       await httpClient.post("/auth/forgot-password", {
-        email: email.trim().toLowerCase(),
+        email: result.data.email.toLowerCase(),
       });
       setSent(true);
     } catch (error) {

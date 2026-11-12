@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { z } from "zod";
 import { toast } from "sonner";
 import { Star, MessageSquare, Edit3, Trash2 } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
@@ -9,6 +10,32 @@ import Pagination from "../../components/common/Pagination";
 import Modal from "../../components/common/Modal";
 import ConfirmDialog from "../../components/common/ConfirmDialog";
 import { httpClient, getErrorMessage } from "../../lib/http";
+
+const reviewSchema = z.object({
+  rating: z
+    .number()
+    .int("Please select a rating")
+    .min(1, "Please select a rating from 1 to 5 stars")
+    .max(5, "Rating cannot be more than 5 stars"),
+  comment: z
+    .string()
+    .trim()
+    .max(1000, "Comment must be 1000 characters or less")
+    .refine(
+      (v) => v.length === 0 || v.length >= 5,
+      "Comment must be at least 5 characters (or leave it empty)",
+    ),
+});
+
+// Returns cleaned data, or shows a toast and returns null
+const validateReview = (rating, comment) => {
+  const result = reviewSchema.safeParse({ rating: Number(rating), comment });
+  if (!result.success) {
+    toast.error(result.error.issues[0].message);
+    return null;
+  }
+  return result.data;
+};
 
 export default function CustomerReviews() {
   const [reviews, setReviews] = useState([]);
@@ -107,12 +134,12 @@ export default function CustomerReviews() {
   }, []);
 
   const handleSaveAppReview = async () => {
+    const data = validateReview(appRating, appComment);
+    if (!data) return;
+
     setAppSaving(true);
     try {
-      const res = await httpClient.post("/app-reviews/my", {
-        rating: appRating,
-        comment: appComment.trim(),
-      });
+      const res = await httpClient.post("/app-reviews/my", data);
       if (res.data?.success) {
         toast.success(res.data.message || "Thanks for reviewing FixPoint!");
         fetchAppReview();
@@ -144,12 +171,14 @@ export default function CustomerReviews() {
   };
 
   const handleSubmitNew = async () => {
+    const data = validateReview(newRating, newComment);
+    if (!data) return;
+
     setNewLoading(true);
     try {
       const res = await httpClient.post("/reviews", {
         bookingId: reviewingBooking._id,
-        rating: newRating,
-        comment: newComment.trim(),
+        ...data,
       });
       if (res.data?.success) {
         toast.success("Review submitted! Thank you.");
@@ -171,12 +200,12 @@ export default function CustomerReviews() {
   };
 
   const handleSaveEdit = async () => {
+    const data = validateReview(editRating, editComment);
+    if (!data) return;
+
     setEditLoading(true);
     try {
-      const res = await httpClient.put(`/reviews/${editingReview._id}`, {
-        rating: editRating,
-        comment: editComment.trim(),
-      });
+      const res = await httpClient.put(`/reviews/${editingReview._id}`, data);
       if (res.data?.success) {
         toast.success("Review updated successfully!");
         setEditingReview(null);
@@ -488,6 +517,7 @@ export default function CustomerReviews() {
               </label>
               <textarea
                 rows={3}
+                maxLength={1000}
                 value={editComment}
                 onChange={(e) => setEditComment(e.target.value)}
                 className="w-full text-xs rounded-xl border border-gray-200 p-3"

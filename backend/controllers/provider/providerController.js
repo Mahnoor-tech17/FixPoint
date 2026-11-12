@@ -1,3 +1,4 @@
+const { getPasswordError } = require("../../utils/passwordPolicy");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 
@@ -292,11 +293,9 @@ const changePassword = async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "New password must be at least 6 characters",
-      });
+    const passwordError = getPasswordError(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const isCorrect = await bcrypt.compare(currentPassword, provider.password);

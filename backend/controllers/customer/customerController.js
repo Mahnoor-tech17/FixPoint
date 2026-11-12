@@ -1,3 +1,4 @@
+const { getPasswordError } = require("../../utils/passwordPolicy");
 const bcrypt = require("bcryptjs");
 const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
@@ -95,11 +96,9 @@ const changePassword = async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "New password must be at least 6 characters",
-      });
+    const passwordError = getPasswordError(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const user = await UserModel.findById(req.user.userId);

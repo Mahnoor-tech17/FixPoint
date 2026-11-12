@@ -1,3 +1,4 @@
+const { getPasswordError } = require("../../utils/passwordPolicy");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
@@ -35,11 +36,9 @@ const signup = async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters",
-      });
+    const passwordError = getPasswordError(password);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const existingUser = await UserModel.findOne({
@@ -391,11 +390,9 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters",
-      });
+    const passwordError = getPasswordError(password);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
     const user = await UserModel.findOne({

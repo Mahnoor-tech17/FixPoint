@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
 import { getErrorMessage, httpClient } from "../../lib/http";
+import PasswordChecklist from "../../components/common/PasswordChecklist";
+import { strongPassword } from "../../lib/passwordPolicy";
 
 const passwordSchema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z.string().min(6, "New password must be at least 6 characters"),
+    newPassword: strongPassword,
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
@@ -560,9 +562,10 @@ export default function ProviderSettings() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="Strong password (see rules below)"
                 className="input-field"
               />
+              <PasswordChecklist password={newPassword} />
               {passwordErrors.newPassword && (
                 <p className="mt-1 text-xs text-red-500">{passwordErrors.newPassword}</p>
               )}

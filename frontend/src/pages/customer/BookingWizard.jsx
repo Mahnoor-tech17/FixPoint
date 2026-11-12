@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
+import { z } from "zod";
 import { toast } from "sonner";
 import {
   Calendar as CalendarIcon,
@@ -19,6 +20,27 @@ import Footer from "../../components/common/Footer";
 import Spinner from "../../components/common/Spinner";
 import { httpClient, getErrorMessage } from "../../lib/http";
 import { getUser, getUserRole } from "../../lib/local-storage";
+
+const detailsSchema = z.object({
+  street: z
+    .string()
+    .trim()
+    .min(1, "Street address is required")
+    .min(5, "Please enter a fuller street address (at least 5 characters)")
+    .max(150, "Street address must be 150 characters or less"),
+  city: z
+    .string()
+    .trim()
+    .min(1, "City is required")
+    .min(2, "City name is too short")
+    .max(60, "City must be 60 characters or less")
+    .regex(/^[\p{L}][\p{L}\s.'-]*$/u, "City can only contain letters"),
+  phone: z
+    .string()
+    .min(1, "Contact phone number is required")
+    .regex(/^(\+92|0)?3\d{9}$/, "Enter a valid Pakistani mobile number (e.g. 03001234567)"),
+  notes: z.string().trim().max(300, "Notes must be 300 characters or less"),
+});
 
 export default function BookingWizard() {
   const [searchParams] = useSearchParams();
@@ -147,22 +169,30 @@ export default function BookingWizard() {
         toast.error("Please select a date.");
         return;
       }
+      if (selectedDate < todayStr) {
+        toast.error("You cannot book a date in the past.");
+        return;
+      }
+      if (selectedDate > maxDateStr) {
+        toast.error(
+          `Bookings can only be made up to ${settings.bookingHorizonDays || 30} days ahead.`,
+        );
+        return;
+      }
       if (!selectedSlot) {
         toast.error("Please choose an available time slot.");
         return;
       }
       setStep(3);
     } else if (step === 3) {
-      if (!street.trim()) {
-        toast.error("Street address is required.");
-        return;
-      }
-      if (!city.trim()) {
-        toast.error("City is required.");
-        return;
-      }
-      if (!phone.trim()) {
-        toast.error("Contact phone number is required.");
+      const details = detailsSchema.safeParse({
+        street,
+        city,
+        phone: phone.replace(/[\s-]/g, ""),
+        notes,
+      });
+      if (!details.success) {
+        toast.error(details.error.issues[0].message);
         return;
       }
       setStep(4);
@@ -182,6 +212,23 @@ export default function BookingWizard() {
       return;
     }
 
+    // Final safety check before sending (in case a step was skipped)
+    const details = detailsSchema.safeParse({
+      street,
+      city,
+      phone: phone.replace(/[\s-]/g, ""),
+      notes,
+    });
+    if (!details.success) {
+      toast.error(details.error.issues[0].message);
+      setStep(3);
+      return;
+    }
+    if (!selectedSlot || !selectedService || !selectedProvider) {
+      toast.error("Please complete all booking steps first.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -191,7 +238,7 @@ export default function BookingWizard() {
         startTime: selectedSlot.startTime,
         customerStreet: street.trim(),
         customerCity: city.trim(),
-        customerPhone: phone.trim(),
+        customerPhone: phone.replace(/[\s-]/g, ""),
         notes: notes.trim(),
       };
 
@@ -486,6 +533,7 @@ export default function BookingWizard() {
                   </label>
                   <textarea
                     rows={3}
+                    maxLength={300}
                     placeholder="Any entry gate instructions, parking tips or specifics about the issue..."
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}

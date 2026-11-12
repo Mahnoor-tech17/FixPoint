@@ -1,10 +1,51 @@
 import React, { useState, useEffect } from "react";
+import { z } from "zod";
 import { toast } from "sonner";
 import { User, Lock, Upload, Save, CheckCircle2 } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 import Spinner from "../../components/common/Spinner";
+import PasswordChecklist from "../../components/common/PasswordChecklist";
+import { strongPassword } from "../../lib/passwordPolicy";
 import { httpClient, getErrorMessage } from "../../lib/http";
 import { getUser, getToken, setAuth } from "../../lib/local-storage";
+
+const nameRegex = /^[\p{L}][\p{L}\s.'-]*$/u;
+
+const profileSchema = z.object({
+  firstName: z
+    .string()
+    .trim()
+    .min(2, "First name must be at least 2 characters")
+    .max(50, "First name must be 50 characters or less")
+    .regex(nameRegex, "First name can only contain letters"),
+  lastName: z
+    .string()
+    .trim()
+    .max(50, "Last name must be 50 characters or less")
+    .refine((v) => v === "" || nameRegex.test(v), "Last name can only contain letters"),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^(\+92|0)?3\d{9}$/, "Enter a valid Pakistani mobile number (e.g. 03001234567)")
+    .or(z.literal("")),
+  city: z.string().trim().max(60, "City must be 60 characters or less"),
+  address: z.string().trim().max(200, "Address must be 200 characters or less"),
+});
+
+const passwordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: strongPassword,
+    confirmPassword: z.string().min(1, "Please confirm your new password"),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: "New passwords do not match",
+    path: ["confirmPassword"],
+  })
+  .refine((d) => d.newPassword !== d.currentPassword, {
+    message: "New password must be different from the current password",
+    path: ["newPassword"],
+  });
 
 export default function CustomerProfile() {
   const [activeTab, setActiveTab] = useState("info"); // "info" | "security"
@@ -84,19 +125,22 @@ export default function CustomerProfile() {
 
   const handleSaveInfo = async (e) => {
     e.preventDefault();
-    if (firstName.trim().length < 2) {
-      toast.error("First name must be at least 2 characters.");
+    const result = profileSchema.safeParse({
+      firstName,
+      lastName,
+      phone: phone.replace(/[\s-]/g, ""),
+      city,
+      address,
+    });
+    if (!result.success) {
+      toast.error(result.error.issues[0].message);
       return;
     }
 
     setSaving(true);
     try {
       const res = await httpClient.put("/customer/profile", {
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        phone: phone.trim(),
-        city: city.trim(),
-        address: address.trim(),
+        ...result.data,
         profilePhoto,
       });
 
@@ -122,12 +166,13 @@ export default function CustomerProfile() {
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
-    if (newPassword.length < 6) {
-      toast.error("New password must be at least 6 characters.");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      toast.error("New passwords do not match.");
+    const result = passwordSchema.safeParse({
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    });
+    if (!result.success) {
+      toast.error(result.error.issues[0].message);
       return;
     }
 
@@ -353,11 +398,12 @@ export default function CustomerProfile() {
                 <input
                   type="password"
                   required
-                  placeholder="At least 6 characters"
+                  placeholder="Strong password (see rules below)"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full text-xs font-semibold rounded-xl border border-gray-200 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#111111]"
                 />
+                <PasswordChecklist password={newPassword} />
               </div>
 
               <div>

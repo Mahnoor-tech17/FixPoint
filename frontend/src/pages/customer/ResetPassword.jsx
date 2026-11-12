@@ -1,9 +1,22 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { z } from "zod";
 import { toast } from "sonner";
 import AuthLayout from "../../components/common/AuthLayout";
 import PasswordInput from "../../components/common/PasswordInput";
+import PasswordChecklist from "../../components/common/PasswordChecklist";
+import { strongPassword } from "../../lib/passwordPolicy";
 import { getErrorMessage, httpClient } from "../../lib/http";
+
+const resetSchema = z
+  .object({
+    password: strongPassword,
+    confirmPassword: z.string().min(1, "Please confirm your password"),
+  })
+  .refine((d) => d.password === d.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
 
 export default function ResetPassword() {
   const navigate = useNavigate();
@@ -23,12 +36,9 @@ export default function ResetPassword() {
       toast.error("Reset link is invalid");
       return;
     }
-    if (form.password.length < 6) {
-      toast.error("Password must be at least 6 characters");
-      return;
-    }
-    if (form.password !== form.confirmPassword) {
-      toast.error("Passwords do not match");
+    const result = resetSchema.safeParse(form);
+    if (!result.success) {
+      toast.error(result.error.issues[0].message);
       return;
     }
 
@@ -67,6 +77,7 @@ export default function ResetPassword() {
             placeholder="New password"
             autoComplete="new-password"
           />
+          <PasswordChecklist password={form.password} />
         </div>
         <div>
           <label className="mb-1.5 block text-sm font-semibold">Confirm password</label>

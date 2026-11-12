@@ -4,6 +4,8 @@ import { z } from "zod";
 import { toast } from "sonner";
 import AuthLayout from "../../components/common/AuthLayout";
 import PasswordInput from "../../components/common/PasswordInput";
+import PasswordChecklist from "../../components/common/PasswordChecklist";
+import { strongPassword } from "../../lib/passwordPolicy";
 import { getErrorMessage, httpClient } from "../../lib/http";
 
 const registerSchema = z
@@ -16,7 +18,7 @@ const registerSchema = z
       .trim()
       .regex(/^(\+92|0)?3\d{9}$/, "Enter a valid Pakistani mobile number")
       .or(z.literal("")),
-    password: z.string().min(6, "Password must be at least 6 characters"),
+    password: strongPassword,
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((d) => d.password === d.confirmPassword, {
@@ -138,6 +140,7 @@ export default function Register() {
             onChange={handleChange}
             autoComplete="new-password"
           />
+          <PasswordChecklist password={form.password} />
         </div>
 
         <div>

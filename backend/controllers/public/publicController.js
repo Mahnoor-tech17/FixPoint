@@ -283,7 +283,7 @@ const getFeaturedProviders = async (req, res) => {
     const providers = await UserModel.find(VISIBLE_PROVIDER_FILTER)
       .sort({ "rating.average": -1, "rating.count": -1 })
       .limit(6)
-      .select("firstName lastName profilePhoto serviceCategory city rating experienceYears hourlyRate")
+      .select("firstName lastName profilePhoto serviceCategory city serviceArea bio rating experienceYears hourlyRate")
       .lean();
 
     return res.status(200).json({

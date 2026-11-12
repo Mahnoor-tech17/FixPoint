@@ -1,21 +1,21 @@
+
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
-
+ 
 const UserModel = require("../../models/userModel");
 const CategoryModel = require("../../models/categoryModel");
-const ServiceModel = require("../../models/serviceModel");
 const BookingModel = require("../../models/bookingModel");
 const ReviewModel = require("../../models/reviewModel");
 const PaymentModel = require("../../models/paymentModel");
 const { sendMail } = require("../../services/emailService");
-
+ 
 const SAFE_FIELDS =
   "-password -verificationCode -verificationCodeExpires -resetPasswordToken -resetPasswordTokenExpires";
-
+ 
 const isValidId = (id) => mongoose.isValidObjectId(id);
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
+ 
 // ================= DASHBOARD =================
 const getStats = async (req, res) => {
   try {
@@ -44,9 +44,9 @@ const getStats = async (req, res) => {
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
     ]);
-
+ 
     const totalRevenue = revenueResult[0]?.total || 0;
-
+ 
     return res.status(200).json({
       success: true,
       stats: {
@@ -64,13 +64,13 @@ const getStats = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-
+ 
+ 
 // ================= CREATE USER (Admin) =================
 const createUser = async (req, res) => {
   try {
     const { firstName, lastName, email, password, phone, role } = req.body;
-
+ 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ success: false, message: "firstName, lastName, email, and password are required" });
     }
@@ -96,22 +96,22 @@ const createUser = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 // ================= USERS =================
 const getAllUsers = async (req, res) => {
   try {
     const { role, search, page = 1, limit = 10 } = req.query;
-
+ 
     const filter = {};
     if (role) filter.role = role.toUpperCase();
     if (search) {
       const regex = new RegExp(escapeRegex(search.trim()), "i");
       filter.$or = [{ firstName: regex }, { lastName: regex }, { email: regex }];
     }
-
+ 
     const pageNum = Math.max(parseInt(page), 1);
     const limitNum = Math.min(Math.max(parseInt(limit), 1), 100);
-
+ 
     const [users, total] = await Promise.all([
       UserModel.find(filter)
         .select(SAFE_FIELDS)
@@ -120,7 +120,7 @@ const getAllUsers = async (req, res) => {
         .limit(limitNum),
       UserModel.countDocuments(filter),
     ]);
-
+ 
     return res.status(200).json({
       success: true,
       total,
@@ -132,57 +132,57 @@ const getAllUsers = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const getUserDetails = async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid user id" });
     }
-
+ 
     const user = await UserModel.findById(id).select(SAFE_FIELDS);
-
+ 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
+ 
     return res.status(200).json({ success: true, user });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid user id" });
     }
-
+ 
     const user = await UserModel.findById(id);
-
+ 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
+ 
     if (user.role === "ADMIN") {
       return res.status(403).json({
         success: false,
         message: "Admin accounts cannot be modified here",
       });
     }
-
+ 
     const { firstName, lastName, phone, isBlocked } = req.body;
-
+ 
     if (firstName !== undefined) user.firstName = firstName;
     if (lastName !== undefined) user.lastName = lastName;
     if (phone !== undefined) user.phone = phone;
     if (isBlocked !== undefined) user.isBlocked = Boolean(isBlocked);
-
+ 
     await user.save();
-
+ 
     return res.status(200).json({
       success: true,
       message: "User updated successfully",
@@ -191,30 +191,30 @@ const updateUser = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid user id" });
     }
-
+ 
     const user = await UserModel.findById(id);
-
+ 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
+ 
     if (user.role === "ADMIN") {
       return res.status(403).json({
         success: false,
         message: "Admin accounts cannot be deleted",
       });
     }
-
+ 
     await user.deleteOne();
-
+ 
     return res.status(200).json({
       success: true,
       message: "User deleted successfully",
@@ -223,12 +223,12 @@ const deleteUser = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 // ================= PROVIDERS =================
 const getProviders = async (req, res) => {
   try {
     const { status, category, search } = req.query;
-
+ 
     const filter = { role: "PROVIDER" };
     if (status) filter.providerStatus = status;
     if (category) filter.serviceCategory = category;
@@ -236,11 +236,11 @@ const getProviders = async (req, res) => {
       const regex = new RegExp(escapeRegex(search.trim()), "i");
       filter.$or = [{ firstName: regex }, { lastName: regex }, { email: regex }];
     }
-
+ 
     const providers = await UserModel.find(filter)
       .select(SAFE_FIELDS)
       .sort({ createdAt: -1 });
-
+ 
     return res.status(200).json({
       success: true,
       total: providers.length,
@@ -250,42 +250,42 @@ const getProviders = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const inviteProvider = async (req, res) => {
   try {
     const { firstName, lastName, email, phone, serviceCategory } = req.body;
-
+ 
     if (!firstName || !lastName || !email || !serviceCategory) {
       return res.status(400).json({
         success: false,
         message: "firstName, lastName, email and serviceCategory are required",
       });
     }
-
+ 
     const category = await CategoryModel.findOne({
       slug: serviceCategory.toLowerCase(),
       isActive: true,
     });
-
+ 
     if (!category) {
       return res.status(400).json({
         success: false,
         message: "Service category does not exist or is inactive",
       });
     }
-
+ 
     const existing = await UserModel.findOne({ email: email.toLowerCase() });
-
+ 
     if (existing) {
       return res.status(400).json({
         success: false,
         message: "Email already exists",
       });
     }
-
+ 
     const tempPassword = crypto.randomBytes(6).toString("base64url");
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
+ 
     const provider = await UserModel.create({
       firstName,
       lastName,
@@ -297,7 +297,7 @@ const inviteProvider = async (req, res) => {
       serviceCategory: category.slug,
       providerStatus: "invited",
     });
-
+ 
     try {
       await sendMail({
         to: provider.email,
@@ -317,7 +317,7 @@ const inviteProvider = async (req, res) => {
         message: "Could not send invitation email. Provider was not created.",
       });
     }
-
+ 
     return res.status(201).json({
       success: true,
       message: "Provider invited successfully. Login details sent by email.",
@@ -327,7 +327,7 @@ const inviteProvider = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const getProviderRequests = async (req, res) => {
   try {
     const requests = await UserModel.find({
@@ -336,7 +336,7 @@ const getProviderRequests = async (req, res) => {
     })
       .select(SAFE_FIELDS)
       .sort({ updatedAt: -1 });
-
+ 
     return res.status(200).json({
       success: true,
       total: requests.length,
@@ -346,48 +346,48 @@ const getProviderRequests = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const updateProviderStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, reason } = req.body;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid provider id" });
     }
-
+ 
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Status must be approved or rejected",
       });
     }
-
+ 
     if (status === "rejected" && !reason) {
       return res.status(400).json({
         success: false,
         message: "Rejection reason is required",
       });
     }
-
+ 
     const provider = await UserModel.findOne({ _id: id, role: "PROVIDER" });
-
+ 
     if (!provider) {
       return res.status(404).json({ success: false, message: "Provider not found" });
     }
-
+ 
     if (provider.providerStatus !== "pending_verification") {
       return res.status(400).json({
         success: false,
         message: "Only providers with pending verification can be approved or rejected",
       });
     }
-
+ 
     provider.providerStatus = status;
     provider.rejectionReason = status === "rejected" ? reason : undefined;
     await provider.save();
-
-
+ 
+ 
     try {
       await sendMail({
         to: provider.email,
@@ -403,7 +403,7 @@ const updateProviderStatus = async (req, res) => {
     } catch (mailError) {
       console.error("Status email failed:", mailError.message);
     }
-
+ 
     return res.status(200).json({
       success: true,
       message: `Provider ${status} successfully`,
@@ -412,7 +412,7 @@ const updateProviderStatus = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 // ================= CATEGORIES =================
 const getCategories = async (req, res) => {
   try {
@@ -422,34 +422,34 @@ const getCategories = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const createCategory = async (req, res) => {
   try {
     const { name, description, icon } = req.body;
-
+ 
     if (!name) {
       return res.status(400).json({ success: false, message: "Category name is required" });
     }
-
+ 
     const slug = name
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-
+ 
     const exists = await CategoryModel.findOne({ $or: [{ name: name.trim() }, { slug }] });
-
+ 
     if (exists) {
       return res.status(400).json({ success: false, message: "Category already exists" });
     }
-
+ 
     const category = await CategoryModel.create({
       name: name.trim(),
       slug,
       description,
       icon,
     });
-
+ 
     return res.status(201).json({
       success: true,
       message: "Category created successfully",
@@ -459,30 +459,30 @@ const createCategory = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid category id" });
     }
-
+ 
     const category = await CategoryModel.findById(id);
-
+ 
     if (!category) {
       return res.status(404).json({ success: false, message: "Category not found" });
     }
-
+ 
     const { name, description, icon, isActive } = req.body;
-
+ 
     if (name !== undefined) category.name = name.trim();
     if (description !== undefined) category.description = description;
     if (icon !== undefined) category.icon = icon;
     if (isActive !== undefined) category.isActive = Boolean(isActive);
-
+ 
     await category.save();
-
+ 
     return res.status(200).json({
       success: true,
       message: "Category updated successfully",
@@ -492,32 +492,32 @@ const updateCategory = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const deleteCategory = async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     if (!isValidId(id)) {
       return res.status(400).json({ success: false, message: "Invalid category id" });
     }
-
+ 
     const category = await CategoryModel.findById(id);
-
+ 
     if (!category) {
       return res.status(404).json({ success: false, message: "Category not found" });
     }
-
+ 
     const inUse = await UserModel.countDocuments({ serviceCategory: category.slug });
-
+ 
     if (inUse > 0) {
       return res.status(400).json({
         success: false,
         message: "Category is used by providers. Deactivate it instead of deleting.",
       });
     }
-
+ 
     await category.deleteOne();
-
+ 
     return res.status(200).json({
       success: true,
       message: "Category deleted successfully",
@@ -526,104 +526,7 @@ const deleteCategory = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ================= ADMIN SERVICES MANAGEMENT =================
-const getAllServices = async (req, res) => {
-  try {
-    const { category, search, active, page = 1, limit = 10 } = req.query;
-    const pageNum = Math.max(parseInt(page) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit) || 10, 1), 50);
-
-    const filter = {};
-    if (category) filter.categorySlug = category;
-    if (active !== undefined && active !== "") {
-      filter.isActive = active === "true";
-    }
-    if (search && search.trim()) {
-      filter.title = { $regex: escapeRegex(search.trim()), $options: "i" };
-    }
-
-    const [services, total] = await Promise.all([
-      ServiceModel.find(filter)
-        .populate("providerId", "firstName lastName email serviceCategory profilePhoto")
-        .sort({ createdAt: -1 })
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum)
-        .lean(),
-      ServiceModel.countDocuments(filter),
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      total,
-      page: pageNum,
-      pages: Math.ceil(total / limitNum) || 1,
-      services,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const toggleServiceActive = async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!isValidId(id)) {
-      return res.status(400).json({ success: false, message: "Invalid service ID" });
-    }
-
-    const service = await ServiceModel.findById(id);
-    if (!service) {
-      return res.status(404).json({ success: false, message: "Service not found" });
-    }
-
-    service.isActive = !service.isActive;
-    await service.save();
-
-    return res.status(200).json({
-      success: true,
-      message: `Service ${service.isActive ? "activated" : "deactivated"} successfully`,
-      service,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const deleteService = async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!isValidId(id)) {
-      return res.status(400).json({ success: false, message: "Invalid service ID" });
-    }
-
-    // Check if there are active bookings
-    const activeBookings = await BookingModel.countDocuments({
-      serviceId: id,
-      status: { $in: ["pending", "confirmed"] },
-    });
-
-    if (activeBookings > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot delete service with active pending or confirmed bookings. Deactivate it instead.",
-      });
-    }
-
-    const deleted = await ServiceModel.findByIdAndDelete(id);
-    if (!deleted) {
-      return res.status(404).json({ success: false, message: "Service not found" });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Service deleted successfully",
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
+ 
 // ================= ADMIN REPORTS & ANALYTICS =================
 const getReports = async (req, res) => {
   try {
@@ -631,7 +534,7 @@ const getReports = async (req, res) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split("T")[0];
-
+ 
     const bookingsLast30Days = await BookingModel.aggregate([
       { $match: { date: { $gte: thirtyDaysAgoStr } } },
       {
@@ -648,12 +551,12 @@ const getReports = async (req, res) => {
       },
       { $sort: { _id: 1 } },
     ]);
-
+ 
     // 2. Status breakdown
     const statusCounts = await BookingModel.aggregate([
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]);
-
+ 
     // 3. Category breakdown
     const categoryCounts = await BookingModel.aggregate([
       {
@@ -667,14 +570,14 @@ const getReports = async (req, res) => {
       },
       { $sort: { count: -1 } },
     ]);
-
+ 
     // 4. Top providers
     const topProviders = await UserModel.find({ role: "PROVIDER", providerStatus: "approved" })
       .select("firstName lastName rating serviceCategory totalBookingsCompleted")
       .sort({ "rating.average": -1, "rating.count": -1 })
       .limit(5)
       .lean();
-
+ 
     return res.status(200).json({
       success: true,
       reports: {
@@ -688,7 +591,7 @@ const getReports = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 const exportBookingsCsv = async (req, res) => {
   try {
     const bookings = await BookingModel.find()
@@ -696,7 +599,7 @@ const exportBookingsCsv = async (req, res) => {
       .populate("providerId", "firstName lastName")
       .sort({ createdAt: -1 })
       .lean();
-
+ 
     const header = [
       "Booking ID",
       "Date",
@@ -711,7 +614,7 @@ const exportBookingsCsv = async (req, res) => {
       "Status",
       "Created At",
     ].join(",");
-
+ 
     const rows = bookings.map((b) => {
       const escape = (val) => `"${String(val || "").replace(/"/g, '""')}"`;
       return [
@@ -729,9 +632,9 @@ const exportBookingsCsv = async (req, res) => {
         escape(b.createdAt?.toISOString() || ""),
       ].join(",");
     });
-
+ 
     const csv = [header, ...rows].join("\n");
-
+ 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", 'attachment; filename="fixpoint-bookings.csv"');
     return res.status(200).send(csv);
@@ -739,12 +642,12 @@ const exportBookingsCsv = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 // ================= PAYMENTS =================
 const getPayments = async (req, res) => {
   try {
     const { type, status, page = 1, limit = 20 } = req.query;
-
+ 
     const query = {};
     if (type && type !== "all") {
       query.type = type;
@@ -752,9 +655,9 @@ const getPayments = async (req, res) => {
     if (status && status !== "all") {
       query.status = status;
     }
-
+ 
     const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
-
+ 
     const [payments, total, totalsAgg] = await Promise.all([
       PaymentModel.find(query)
         .sort({ createdAt: -1 })
@@ -802,10 +705,10 @@ const getPayments = async (req, res) => {
         },
       ]),
     ]);
-
+ 
     const totals = totalsAgg[0] || { registrationFees: 0, bookingFees: 0, refunds: 0 };
     totals.totalRevenue = (totals.registrationFees || 0) + (totals.bookingFees || 0) - (totals.refunds || 0);
-
+ 
     return res.status(200).json({
       success: true,
       payments,
@@ -820,7 +723,7 @@ const getPayments = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
+ 
 module.exports = {
   getStats,
   createUser,
@@ -836,9 +739,6 @@ module.exports = {
   createCategory,
   updateCategory,
   deleteCategory,
-  getAllServices,
-  toggleServiceActive,
-  deleteService,
   getReports,
   exportBookingsCsv,
   getPayments,

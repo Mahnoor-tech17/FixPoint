@@ -16,8 +16,8 @@ export default function CustomerReviews() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
 
-  // Tabs: "provider" | "app"
-  const [tab, setTab] = useState("provider");
+  // Tabs: "app" (default, pehle) | "provider"
+  const [tab, setTab] = useState("app");
 
   // App (FixPoint) review state
   const [appReview, setAppReview] = useState(null);
@@ -220,8 +220,8 @@ export default function CustomerReviews() {
         {/* TABS */}
         <div className="inline-flex rounded-full bg-white border border-gray-100 p-1 shadow-sm">
           {[
-            { key: "provider", label: "Provider Reviews" },
             { key: "app", label: "FixPoint App Review" },
+            { key: "provider", label: "Provider Reviews" },
           ].map((t) => (
             <button
               key={t.key}

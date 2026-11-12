@@ -17,9 +17,6 @@ const {
   createCategory,
   updateCategory,
   deleteCategory,
-  getAllServices,
-  toggleServiceActive,
-  deleteService,
   getReports,
   exportBookingsCsv,
   getPayments,
@@ -47,10 +44,6 @@ router.get("/categories", getCategories);
 router.post("/categories", createCategory);
 router.put("/categories/:id", updateCategory);
 router.delete("/categories/:id", deleteCategory);
-
-router.get("/services", getAllServices);
-router.put("/services/:id/toggle-active", toggleServiceActive);
-router.delete("/services/:id", deleteService);
 
 router.get("/reports", getReports);
 router.get("/reports/export-csv", exportBookingsCsv);

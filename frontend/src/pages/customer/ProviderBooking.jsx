@@ -242,9 +242,15 @@ export default function ProviderBooking() {
                       <MapPin className="h-3 w-3 text-slate-400" /> {provider.city}
                     </span>
                   )}
-                  <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
-                    Rs {provider.hourlyRate}/hr (estimate)
-                  </span>
+                  {provider.hourlyRate ? (
+                    <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
+                      Rs {provider.hourlyRate}/hr (estimate)
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
+                      Charges paid directly to provider
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

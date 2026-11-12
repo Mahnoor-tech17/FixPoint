@@ -26,9 +26,22 @@ const app = express();
 
 const PORT = process.env.PORT || 4000;
 
+// Allowed frontends: FRONTEND_URL + optional CORS_ORIGINS (comma separated, e.g. http://localhost:5173)
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.CORS_ORIGINS || "").split(","),
+]
+  .map((o) => (o || "").trim().replace(/\/$/, ""))
+  .filter(Boolean);
+if (allowedOrigins.length === 0) allowedOrigins.push("http://localhost:5173");
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      // No origin = server-to-server calls (Stripe webhook, curl, health checks)
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    },
     credentials: true,
   }),
 );

@@ -42,7 +42,6 @@ import ProviderPayments from "../pages/provider/ProviderPayments";
 // Admin pages
 import AdminDashboard from "../pages/admin/AdminDashboard";
 import AdminBookings from "../pages/admin/AdminBookings";
-import AdminServices from "../pages/admin/AdminServices";
 import AdminCategories from "../pages/admin/AdminCategories";
 import AdminProviders from "../pages/admin/AdminProviders";
 import AdminProviderRequests from "../pages/admin/AdminProviderRequests";
@@ -270,14 +269,6 @@ export default function AppRoutes() {
           element={
             <PrivateRoute allowedRoles={["ADMIN"]}>
               <AdminBookings />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/admin/services"
-          element={
-            <PrivateRoute allowedRoles={["ADMIN"]}>
-              <AdminServices />
             </PrivateRoute>
           }
         />

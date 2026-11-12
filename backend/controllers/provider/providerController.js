@@ -250,14 +250,7 @@ const submitProfile = async (req, res) => {
     if (!provider.bio) missing.push("bio");
     if (provider.experienceYears === undefined || provider.experienceYears === null)
       missing.push("experience");
-    if (
-      provider.hourlyRate === undefined ||
-      provider.hourlyRate === null ||
-      provider.hourlyRate < 100 ||
-      provider.hourlyRate > 50000
-    ) {
-      missing.push("hourly rate (between 100 and 50,000 PKR)");
-    }
+    // hourlyRate optional hai (service charges customer provider ko seedha deta hai)
     if (!provider.city) missing.push("city");
     if (!provider.serviceAreas?.length) missing.push("service areas");
     if (!provider.cnic) missing.push("CNIC number");

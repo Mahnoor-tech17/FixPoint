@@ -10,6 +10,7 @@ import {
   DollarSign,
   User,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 import StatusBadge from "../../components/common/StatusBadge";
@@ -25,16 +26,16 @@ export default function CustomerDashboard() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
+    Promise.allSettled([
       httpClient.get("/customer/bookings?scope=upcoming&limit=3"),
-      httpClient.get("/public/featured-providers"),
+      httpClient.get("/public/featured"),
     ])
       .then(([bookingsRes, providersRes]) => {
-        if (bookingsRes.data?.success) {
-          setUpcomingBookings(bookingsRes.data.bookings || []);
+        if (bookingsRes.status === "fulfilled" && bookingsRes.value.data?.success) {
+          setUpcomingBookings(bookingsRes.value.data.bookings || []);
         }
-        if (providersRes.data?.success) {
-          setFeaturedProviders(providersRes.data.providers || []);
+        if (providersRes.status === "fulfilled" && providersRes.value.data?.success) {
+          setFeaturedProviders(providersRes.value.data.providers || []);
         }
       })
       .catch((err) => console.error("Error loading dashboard data:", err))
@@ -60,6 +61,52 @@ export default function CustomerDashboard() {
           >
             <Plus className="w-4 h-4" />
             Book a Service
+          </Link>
+        </div>
+
+        {/* Quick stats */}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Link
+            to="/customer/bookings"
+            className="rounded-3xl bg-white p-5 border border-black/5 shadow-xs hover:shadow-md transition flex items-center gap-4"
+          >
+            <div className="h-12 w-12 rounded-2xl bg-pastel-mint flex items-center justify-center">
+              <Calendar className="h-5 w-5 text-ink" />
+            </div>
+            <div>
+              <p className="text-2xl font-extrabold text-ink leading-none">
+                {loading ? "–" : upcomingBookings.length}
+              </p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Upcoming bookings</p>
+            </div>
+          </Link>
+
+          <Link
+            to="/customer/search"
+            className="rounded-3xl bg-white p-5 border border-black/5 shadow-xs hover:shadow-md transition flex items-center gap-4"
+          >
+            <div className="h-12 w-12 rounded-2xl bg-pastel-yellow flex items-center justify-center">
+              <Users className="h-5 w-5 text-ink" />
+            </div>
+            <div>
+              <p className="text-2xl font-extrabold text-ink leading-none">
+                {loading ? "–" : featuredProviders.length}
+              </p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Top verified providers</p>
+            </div>
+          </Link>
+
+          <Link
+            to="/customer/reviews"
+            className="rounded-3xl bg-white p-5 border border-black/5 shadow-xs hover:shadow-md transition flex items-center gap-4"
+          >
+            <div className="h-12 w-12 rounded-2xl bg-pastel-yellow flex items-center justify-center">
+              <Star className="h-5 w-5 text-ink" />
+            </div>
+            <div>
+              <p className="text-sm font-extrabold text-ink leading-tight">Rate FixPoint</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Share your feedback</p>
+            </div>
           </Link>
         </div>
 
@@ -150,7 +197,9 @@ export default function CustomerDashboard() {
 
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                     <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
-                      Est. Rs {b.estimatedPrice?.toLocaleString()}
+                      {b.estimatedPrice
+                        ? `Est. Rs ${b.estimatedPrice.toLocaleString()}`
+                        : "Pay provider directly"}
                     </span>
                     <Link
                       to="/customer/bookings"
@@ -170,7 +219,7 @@ export default function CustomerDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-extrabold text-ink sm:text-xl">Top Rated Providers</h3>
-              <p className="text-xs text-slate-500">Verified professionals ready to assist you</p>
+              <p className="text-xs text-slate-500">Booking is done from Browse Services</p>
             </div>
             <Link
               to="/customer/search"
@@ -180,72 +229,81 @@ export default function CustomerDashboard() {
             </Link>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {featuredProviders.slice(0, 6).map((p) => (
-              <div
-                key={p._id}
-                className="rounded-3xl bg-white p-5 border border-black/5 shadow-xs flex flex-col justify-between space-y-4 hover:shadow-md transition"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
+          {loading ? (
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-80 w-full animate-pulse rounded-3xl bg-slate-100" />
+              ))}
+            </div>
+          ) : featuredProviders.length === 0 ? null : (
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {featuredProviders.slice(0, 3).map((p) => (
+                <div
+                  key={p._id}
+                  className="rounded-3xl bg-white p-6 border border-black/5 shadow-xs hover:shadow-md transition flex flex-col items-center text-center min-h-[20rem]"
+                >
+                  <div className="shrink-0 mb-4">
                     {p.profilePhoto ? (
                       <img
                         src={p.profilePhoto}
                         alt={p.firstName}
-                        className="h-12 w-12 rounded-2xl object-cover border border-slate-100"
+                        className="h-24 w-24 rounded-2xl object-cover border border-slate-100"
                       />
                     ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-pastel-mint text-base font-extrabold text-ink">
+                      <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-pastel-mint text-xl font-extrabold text-ink">
                         {p.firstName?.[0]}
                         {p.lastName?.[0]}
                       </div>
                     )}
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-bold text-ink">
-                          {p.firstName} {p.lastName}
-                        </p>
-                        <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                      </div>
-                      <span className="rounded-full bg-pastel-yellow px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-ink">
-                        {p.serviceCategory}
-                      </span>
-                    </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                    <StarRating rating={p.rating?.average || 5} showValue size="sm" />
-                    {p.city && (
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3 text-slate-400" /> {p.city}
-                      </span>
+                  <div className="flex-1 min-w-0 w-full flex flex-col items-center">
+                    <div className="flex items-center gap-1.5 max-w-full">
+                      <p className="text-lg font-bold text-ink truncate">
+                        {p.firstName} {p.lastName}
+                      </p>
+                      <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+                    </div>
+                    <span className="mt-1 rounded-full bg-pastel-yellow px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-ink">
+                      {p.serviceCategory?.replace("-", " ")}
+                    </span>
+
+                    <div className="mt-3 flex flex-col items-center gap-1.5 text-xs text-slate-500">
+                      <StarRating rating={p.rating?.average || 5} showValue size="sm" />
+                      {(p.city || p.serviceArea) && (
+                        <span className="flex items-center gap-1">
+                          <MapPin className="h-3.5 w-3.5 text-slate-400" /> {p.city || p.serviceArea}
+                        </span>
+                      )}
+                      {p.experienceYears > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3.5 w-3.5 text-slate-400" /> {p.experienceYears} yrs experience
+                        </span>
+                      )}
+                    </div>
+
+                    {p.bio && (
+                      <p className="mt-3 text-xs text-slate-600 line-clamp-2 break-words max-w-full leading-relaxed">
+                        {p.bio}
+                      </p>
                     )}
                   </div>
 
-                  {p.bio && (
-                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                      {p.bio}
+                  <div className="mt-5 w-full space-y-2">
+                    <p className="text-xs font-bold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1">
+                      {p.hourlyRate ? `Rs ${p.hourlyRate}/hr` : "Pay provider directly"}
                     </p>
-                  )}
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Rate</span>
-                    <span className="text-sm font-extrabold text-ink">
-                      Rs {p.hourlyRate}/hr
-                    </span>
+                    <Link
+                      to={p.serviceCategory ? `/customer/search?category=${encodeURIComponent(p.serviceCategory)}` : "/customer/search"}
+                      className="btn-dark text-xs py-2.5 px-4 w-full flex items-center justify-center gap-1"
+                    >
+                      Find in Browse Services <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
                   </div>
-                  <Link
-                    to={`/customer/providers/${p._id}`}
-                    className="btn-dark text-xs py-2 px-3.5 flex items-center gap-1"
-                  >
-                    Book now <ArrowRight className="h-3 w-3" />
-                  </Link>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </CustomerLayout>

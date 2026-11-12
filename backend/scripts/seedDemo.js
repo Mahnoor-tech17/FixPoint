@@ -1,7 +1,8 @@
+
 const path = require("path");
 const dotenv = require("dotenv");
 dotenv.config({ path: path.join(__dirname, "../.env") });
-
+ 
 const bcrypt = require("bcryptjs");
 const ConnectToDB = require("../models/db");
 const UserModel = require("../models/userModel");
@@ -11,12 +12,12 @@ const BookingModel = require("../models/bookingModel");
 const ReviewModel = require("../models/reviewModel");
 const SettingModel = require("../models/settingModel");
 const { getNextSequence } = require("../models/counterModel");
-
+ 
 const seedDemo = async () => {
   try {
     await ConnectToDB();
     console.log("Connected to MongoDB for Demo Seeding...");
-
+ 
     // 1. Settings
     let settings = await SettingModel.findOne();
     if (!settings) {
@@ -30,7 +31,7 @@ const seedDemo = async () => {
       });
       console.log("Created Platform Settings.");
     }
-
+ 
     // 2. Categories
     const categoriesData = [
       { name: "Home Cleaner", slug: "home-cleaner", description: "Deep cleaning, dusting, and hygiene maintenance." },
@@ -39,17 +40,17 @@ const seedDemo = async () => {
       { name: "Carpenter", slug: "carpenter", description: "Furniture repair, door locks, shelving, and woodwork." },
       { name: "Painter", slug: "painter", description: "Interior and exterior wall painting, touch-ups, and coatings." },
     ];
-
+ 
     for (const cat of categoriesData) {
       await CategoryModel.findOneAndUpdate({ slug: cat.slug }, cat, { upsert: true, new: true });
     }
     console.log("Seeded Categories.");
-
+ 
     // 3. Create Admin
     const adminEmail = process.env.ADMIN_EMAIL || "admin@fixpoint.com";
     const adminPassword = process.env.ADMIN_PASSWORD || "Admin123456!";
     const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
-
+ 
     let admin = await UserModel.findOne({ email: adminEmail });
     if (!admin) {
       admin = await UserModel.create({
@@ -62,7 +63,7 @@ const seedDemo = async () => {
       });
       console.log("Created Admin:", adminEmail);
     }
-
+ 
     // 4. Create Demo Customer
     const customerPassword = await bcrypt.hash("Customer123!", 10);
     let customer = await UserModel.findOne({ email: "customer@fixpoint.com" });
@@ -80,7 +81,7 @@ const seedDemo = async () => {
       });
       console.log("Created Customer: customer@fixpoint.com / Customer123!");
     }
-
+ 
     // 5. Create Approved Provider (Electrician)
     const providerPassword = await bcrypt.hash("Provider123!", 10);
     let provider = await UserModel.findOne({ email: "electrician@fixpoint.com" });
@@ -111,7 +112,7 @@ const seedDemo = async () => {
       });
       console.log("Created Provider: electrician@fixpoint.com / Provider123!");
     }
-
+ 
     // 6. Services for Provider
     let service1 = await ServiceModel.findOne({ providerId: provider._id, title: "AC Switch & Power Point Repair" });
     if (!service1) {
@@ -127,7 +128,7 @@ const seedDemo = async () => {
         isActive: true,
       });
     }
-
+ 
     let service2 = await ServiceModel.findOne({ providerId: provider._id, title: "Full Home Electrical Safety Inspection" });
     if (!service2) {
       service2 = await ServiceModel.create({
@@ -142,11 +143,11 @@ const seedDemo = async () => {
         isActive: true,
       });
     }
-
+ 
     // 7. Completed Booking + Review
     let pastBooking = await BookingModel.findOne({ customerId: customer._id, status: "completed" });
     if (!pastBooking) {
-      const seq = await getNextSequence("bookingId");
+      const seq = await getNextSequence("booking");
       pastBooking = await BookingModel.create({
         bookingId: `FP-${String(seq).padStart(6, "0")}`,
         customerId: customer._id,
@@ -171,7 +172,7 @@ const seedDemo = async () => {
         status: "completed",
         reviewed: true,
       });
-
+ 
       await ReviewModel.create({
         bookingId: pastBooking._id,
         customerId: customer._id,
@@ -181,18 +182,18 @@ const seedDemo = async () => {
         comment: "Tariq arrived punctually with proper tools, replaced the burnt AC switch safely, and tested everything.",
         customerName: `${customer.firstName} ${customer.lastName[0]}.`,
       });
-
+ 
       console.log("Created Past Completed Booking and Review.");
     }
-
+ 
     // 8. Upcoming Confirmed Booking
     let upcomingBooking = await BookingModel.findOne({ customerId: customer._id, status: "confirmed" });
     if (!upcomingBooking) {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 2);
       const tomorrowStr = tomorrow.toISOString().split("T")[0];
-
-      const seq2 = await getNextSequence("bookingId");
+ 
+      const seq2 = await getNextSequence("booking");
       upcomingBooking = await BookingModel.create({
         bookingId: `FP-${String(seq2).padStart(6, "0")}`,
         customerId: customer._id,
@@ -218,7 +219,7 @@ const seedDemo = async () => {
       });
       console.log("Created Upcoming Confirmed Booking:", upcomingBooking.bookingId);
     }
-
+ 
     console.log("=== Demo Seeding Complete! ===");
     process.exit(0);
   } catch (error) {
@@ -226,5 +227,5 @@ const seedDemo = async () => {
     process.exit(1);
   }
 };
-
+ 
 seedDemo();

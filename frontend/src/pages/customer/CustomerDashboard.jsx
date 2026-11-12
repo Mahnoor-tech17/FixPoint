@@ -199,7 +199,7 @@ export default function CustomerDashboard() {
                     <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">
                       {b.estimatedPrice
                         ? `Est. Rs ${b.estimatedPrice.toLocaleString()}`
-                        : "Pay provider directly"}
+                        : "Service fee after work"}
                     </span>
                     <Link
                       to="/customer/bookings"
@@ -291,7 +291,7 @@ export default function CustomerDashboard() {
 
                   <div className="mt-5 w-full space-y-2">
                     <p className="text-xs font-bold text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1">
-                      {p.hourlyRate ? `Rs ${p.hourlyRate}/hr` : "Pay provider directly"}
+                      Booking fee Rs 200 · Service fee after work
                     </p>
                     <Link
                       to={p.serviceCategory ? `/customer/search?category=${encodeURIComponent(p.serviceCategory)}` : "/customer/search"}

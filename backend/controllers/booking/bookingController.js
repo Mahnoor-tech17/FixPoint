@@ -7,6 +7,8 @@ const { getNextSequence } = require("../../models/counterModel");
 const { generateAvailableSlots, getPKTNow, toMinutes } = require("../../services/slotService");
 const { sendMail } = require("../../services/emailService");
 
+const escapeRegex = (str = "") => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const sendBookingEmail = async (userId, subject, message) => {
   try {
     const user = await UserModel.findById(userId).select("email firstName");
@@ -46,7 +48,43 @@ const isBookingStartTimePassed = (bookingDate, bookingStartTime) => {
   return toMinutes(bookingStartTime) <= toMinutes(pktNow.time);
 };
 
-// ================= CREATE BOOKING (Customer only) =================
+// Helper to attach compatibility aliases for frontend
+const attachBookingCompat = (b) => {
+  if (!b) return b;
+  const cust = b.customer || b.customerId;
+  const prov = b.provider || b.providerId;
+  const sStart = b.slotStart || b.startTime;
+  const sEnd = b.slotEnd || b.endTime;
+  const total = b.total !== undefined ? b.total : (b.priceSnapshot || b.price || 0);
+  const street = b.address?.line || b.customerStreet || "";
+  const city = b.address?.city || b.customerCity || "";
+  const area = b.address?.area || b.customerCity || "";
+  const phone = b.phone || b.customerPhone || "";
+  const primaryTitle = b.items?.[0]?.title || b.serviceTitle || "Service";
+
+  return {
+    ...b,
+    customer: cust,
+    customerId: cust,
+    provider: prov,
+    providerId: prov,
+    slotStart: sStart,
+    startTime: sStart,
+    slotEnd: sEnd,
+    endTime: sEnd,
+    total,
+    priceSnapshot: total,
+    price: total,
+    serviceTitle: primaryTitle,
+    customerStreet: street,
+    customerCity: city,
+    customerArea: area,
+    customerPhone: phone,
+    phone,
+  };
+};
+
+// ================= CREATE BOOKING (Customer only / Backward compatibility) =================
 const createBooking = async (req, res) => {
   try {
     const customerId = req.user.userId;
@@ -101,7 +139,7 @@ const createBooking = async (req, res) => {
     // 3. Fetch and validate service
     const service = await ServiceModel.findOne({
       _id: serviceId,
-      providerId: provider._id,
+      provider: provider._id,
       isActive: true,
     });
 
@@ -117,6 +155,7 @@ const createBooking = async (req, res) => {
       provider,
       date,
       service,
+      durationMinutes: service.durationMinutes,
     });
 
     const matchingSlot = availableSlots.find((s) => s.startTime === startTime);
@@ -128,46 +167,49 @@ const createBooking = async (req, res) => {
     }
 
     // 5. Price calculation snapshot
-    // Fixed -> service.price; Hourly -> price * (durationMinutes / 60)
-    const calculatedPrice =
-      service.priceType === "hourly"
-        ? Math.round((service.price * service.durationMinutes) / 60)
-        : service.price;
+    const calculatedPrice = service.price;
 
-    // 6. Settings for autoConfirmBookings
+    // 6. Settings
     const settings = await SettingModel.getSettings();
-    const initialStatus = settings.autoConfirmBookings ? "confirmed" : "pending";
+    const commissionRate = settings.commissionRate ?? 0.20;
+    const commissionAmount = Math.round(calculatedPrice * commissionRate);
+    const providerAmount = calculatedPrice - commissionAmount;
+    const initialStatus = "awaiting_provider";
 
     // 7. Atomic sequence for bookingId
     const seq = await getNextSequence("booking");
     const humanBookingId = formatBookingId(seq);
 
-    // 8. Create booking (protected by unique index on providerId + date + startTime for pending/confirmed)
+    // 8. Create booking matching the unified BookingModel schema
     let booking;
     try {
       booking = await BookingModel.create({
         bookingId: humanBookingId,
-        customerId,
-        providerId: provider._id,
-        serviceId: service._id,
-        serviceTitle: service.title,
-        categorySlug: service.categorySlug,
-        price: calculatedPrice,
-        priceSnapshot: calculatedPrice,
-        priceType: service.priceType,
-        durationMinutes: service.durationMinutes,
+        customer: customerId,
+        provider: provider._id,
+        items: [
+          {
+            serviceId: service._id,
+            masterServiceId: service.masterServiceId,
+            title: service.title,
+            price: calculatedPrice,
+            durationMinutes: service.durationMinutes,
+          },
+        ],
+        total: calculatedPrice,
+        commissionRate,
+        commissionAmount,
+        providerAmount,
         date,
-        startTime: matchingSlot.startTime,
-        endTime: matchingSlot.endTime,
+        slotStart: matchingSlot.startTime,
+        slotEnd: matchingSlot.endTime,
+        durationMinutes: service.durationMinutes,
         address: {
-          street: resolvedAddress.street.trim(),
+          line: resolvedAddress.street.trim(),
           area: (resolvedAddress.area || resolvedAddress.city).trim(),
           city: resolvedAddress.city.trim(),
-          notes: resolvedAddress.notes ? resolvedAddress.notes.trim() : "",
         },
-        customerStreet: resolvedAddress.street.trim(),
-        customerCity: resolvedAddress.city.trim(),
-        customerPhone: customerPhone.trim(),
+        phone: customerPhone.trim(),
         notes: notes ? notes.trim() : "",
         status: initialStatus,
       });
@@ -193,8 +235,8 @@ const createBooking = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Booking confirmed successfully",
-      booking,
+      message: "Booking submitted successfully",
+      booking: attachBookingCompat(booking.toObject()),
     });
   } catch (error) {
     console.error("createBooking error:", error);
@@ -213,28 +255,28 @@ const getBookings = async (req, res) => {
 
     const filter = {};
 
-    // Role-based scoping
+    // Role-based scoping (check both unified customer/provider and legacy aliases)
     if (role === "CUSTOMER") {
-      filter.customerId = userId;
+      filter.$or = [{ customer: userId }, { customerId: userId }];
     } else if (role === "PROVIDER") {
-      filter.providerId = userId;
+      filter.$or = [{ provider: userId }, { providerId: userId }];
     }
     // Admin sees all, or can filter by specific provider/customer
     if (role === "ADMIN") {
       if (req.query.providerId && mongoose.isValidObjectId(req.query.providerId)) {
-        filter.providerId = req.query.providerId;
+        filter.$or = [{ provider: req.query.providerId }, { providerId: req.query.providerId }];
       }
       if (req.query.customerId && mongoose.isValidObjectId(req.query.customerId)) {
-        filter.customerId = req.query.customerId;
+        filter.$or = [{ customer: req.query.customerId }, { customerId: req.query.customerId }];
       }
     }
 
     // Status filter
     if (status) {
       if (status === "upcoming") {
-        filter.status = { $in: ["pending", "confirmed"] };
+        filter.status = { $in: ["awaiting_provider", "confirmed", "on_the_way", "in_progress", "pending_payment"] };
       } else if (status === "past") {
-        filter.status = { $in: ["completed", "cancelled", "no_show"] };
+        filter.status = { $in: ["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"] };
       } else {
         filter.status = status;
       }
@@ -248,34 +290,44 @@ const getBookings = async (req, res) => {
       const regex = new RegExp(escapeRegex(search.trim()), "i");
       filter.$or = [
         { bookingId: regex },
-        { serviceTitle: regex },
-        { customerPhone: regex },
+        { "items.title": regex },
+        { phone: regex },
       ];
     }
 
     const [bookings, total] = await Promise.all([
       BookingModel.find(filter)
-        .populate("customerId", "firstName lastName profilePhoto")
-        .populate("providerId", "firstName lastName profilePhoto serviceCategory")
-        .sort({ date: -1, startTime: -1 })
+        .populate("customer", "firstName lastName profilePhoto")
+        .populate("provider", "firstName lastName profilePhoto serviceCategory")
+        .populate("items.serviceId", "title price durationMinutes images")
+        .sort({ date: -1, slotStart: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
         .lean(),
       BookingModel.countDocuments(filter),
     ]);
 
-    // Apply privacy masking on phone numbers for list
+    // Apply privacy masking on phone numbers for list and attach compat fields
     const sanitized = bookings.map((b) => {
-      const isOwner = role === "CUSTOMER" && b.customerId?._id?.toString() === userId;
-      const isAssignedProvider = role === "PROVIDER" && b.providerId?._id?.toString() === userId;
+      const cId = (b.customer?._id || b.customer || b.customerId)?.toString();
+      const pId = (b.provider?._id || b.provider || b.providerId)?.toString();
+      const isOwner = role === "CUSTOMER" && cId === userId;
+      const isAssignedProvider = role === "PROVIDER" && pId === userId;
       const isAdmin = role === "ADMIN";
 
       const showCustomerContact = isAssignedProvider || isAdmin;
-      const showProviderContact = (isOwner && b.status === "confirmed") || isAdmin;
+      const showProviderContact = (isOwner && ["confirmed", "on_the_way", "in_progress", "completed"].includes(b.status)) || isAdmin;
 
+      const compat = attachBookingCompat(b);
       return {
-        ...b,
-        customerPhone: showCustomerContact ? b.customerPhone : undefined,
+        ...compat,
+        customerPhone: showCustomerContact ? compat.customerPhone : undefined,
+        provider: compat.provider
+          ? {
+              ...compat.provider,
+              phone: showProviderContact ? compat.provider.phone : undefined,
+            }
+          : undefined,
       };
     });
 
@@ -299,34 +351,42 @@ const getBookingDetails = async (req, res) => {
 
     const query = mongoose.isValidObjectId(id) ? { _id: id } : { bookingId: id };
     const booking = await BookingModel.findOne(query)
-      .populate("customerId", "firstName lastName profilePhoto email phone")
-      .populate("providerId", "firstName lastName profilePhoto serviceCategory phone rating")
+      .populate("customer", "firstName lastName profilePhoto email phone")
+      .populate("provider", "firstName lastName profilePhoto serviceCategory phone rating")
+      .populate("items.serviceId", "title price durationMinutes images")
       .lean();
 
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
+    const cId = (booking.customer?._id || booking.customer || booking.customerId)?.toString();
+    const pId = (booking.provider?._id || booking.provider || booking.providerId)?.toString();
+
     // Ownership check
-    const isCustomer = booking.customerId?._id?.toString() === userId;
-    const isProvider = booking.providerId?._id?.toString() === userId;
+    const isCustomer = cId === userId;
+    const isProvider = pId === userId;
     const isAdmin = role === "ADMIN";
 
     if (!isCustomer && !isProvider && !isAdmin) {
       return res.status(403).json({ success: false, message: "Access denied to this booking" });
     }
 
-    // Privacy masking:
-    // Customer sees provider's phone only if confirmed or completed
-    if (isCustomer && !["confirmed", "completed"].includes(booking.status)) {
-      if (booking.providerId) {
-        delete booking.providerId.phone;
+    const compat = attachBookingCompat(booking);
+
+    // Privacy masking: Customer sees provider's phone only if confirmed, on_the_way, in_progress, completed
+    if (isCustomer && !["confirmed", "on_the_way", "in_progress", "completed"].includes(compat.status)) {
+      if (compat.provider) {
+        delete compat.provider.phone;
+      }
+      if (compat.providerId) {
+        delete compat.providerId.phone;
       }
     }
 
     return res.status(200).json({
       success: true,
-      booking,
+      booking: compat,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -349,7 +409,8 @@ const updateBookingStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    const isProvider = booking.providerId.toString() === userId;
+    const pId = (booking.provider || booking.providerId)?.toString();
+    const isProvider = pId === userId;
     const isAdmin = role === "ADMIN";
 
     if (!isProvider && !isAdmin) {
@@ -359,72 +420,46 @@ const updateBookingStatus = async (req, res) => {
     const currentStatus = booking.status;
 
     // Terminal statuses cannot be changed
-    if (["completed", "cancelled", "no_show"].includes(currentStatus)) {
+    if (["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"].includes(currentStatus)) {
       return res.status(400).json({
         success: false,
         message: `Booking is already ${currentStatus} and cannot be modified.`,
       });
     }
 
-    // State machine transitions:
+    const sStart = booking.slotStart || booking.startTime;
+    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
+    const cId = booking.customer || booking.customerId;
+
     if (status === "confirmed") {
-      if (currentStatus !== "pending") {
+      if (!["pending", "pending_payment", "awaiting_provider"].includes(currentStatus)) {
         return res.status(400).json({
           success: false,
-          message: "Only pending bookings can be confirmed.",
+          message: "Only pending/awaiting bookings can be confirmed.",
         });
       }
       booking.status = "confirmed";
 
       await sendBookingEmail(
-        booking.customerId,
+        cId,
         "Booking Confirmed!",
-        `Your booking (${booking.bookingId}) for ${booking.serviceTitle} on ${booking.date} at ${booking.startTime} has been confirmed.`
+        `Your booking (${booking.bookingId}) for ${title} on ${booking.date} at ${sStart} has been confirmed.`
       );
     } else if (status === "completed") {
-      if (currentStatus !== "confirmed") {
+      if (!["confirmed", "on_the_way", "in_progress"].includes(currentStatus)) {
         return res.status(400).json({
           success: false,
-          message: "Only confirmed bookings can be marked as completed.",
-        });
-      }
-
-      // Check that start time has passed
-      if (!isBookingStartTimePassed(booking.date, booking.startTime)) {
-        return res.status(400).json({
-          success: false,
-          message: "Cannot mark booking as completed before the appointment start time.",
+          message: "Only confirmed or in-progress bookings can be marked as completed.",
         });
       }
 
       booking.status = "completed";
+      booking.completedAt = new Date();
 
       await sendBookingEmail(
-        booking.customerId,
+        cId,
         "Service Completed",
-        `Your service for ${booking.serviceTitle} (${booking.bookingId}) has been marked as completed. Please leave a review!`
-      );
-    } else if (status === "no_show") {
-      if (currentStatus !== "confirmed") {
-        return res.status(400).json({
-          success: false,
-          message: "Only confirmed bookings can be marked as no-show.",
-        });
-      }
-
-      if (!isBookingStartTimePassed(booking.date, booking.startTime)) {
-        return res.status(400).json({
-          success: false,
-          message: "Cannot mark booking as no-show before the appointment start time.",
-        });
-      }
-
-      booking.status = "no_show";
-
-      await sendBookingEmail(
-        booking.customerId,
-        "Appointment Marked as No-Show",
-        `Your appointment (${booking.bookingId}) was marked as no-show by the provider.`
+        `Your service for ${title} (${booking.bookingId}) has been marked as completed. Please leave a review!`
       );
     } else if (status === "cancelled") {
       if (!reason || reason.trim().length < 3) {
@@ -439,15 +474,12 @@ const updateBookingStatus = async (req, res) => {
       booking.cancelReason = reason.trim();
 
       await sendBookingEmail(
-        booking.customerId,
+        cId,
         "Booking Cancelled",
         `Your booking (${booking.bookingId}) was cancelled by the ${booking.cancelledBy}. Reason: ${booking.cancelReason}`
       );
     } else {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status transition to ${status}`,
-      });
+      booking.status = status;
     }
 
     await booking.save();
@@ -455,7 +487,7 @@ const updateBookingStatus = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Booking status updated to ${status}`,
-      booking,
+      booking: attachBookingCompat(booking.toObject()),
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -469,23 +501,30 @@ const cancelCustomerBooking = async (req, res) => {
     const { reason } = req.body;
     const customerId = req.user.userId;
 
-    const booking = await BookingModel.findOne({ _id: id, customerId });
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ customer: customerId }, { customerId }],
+    });
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    if (["completed", "cancelled", "no_show"].includes(booking.status)) {
+    if (["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"].includes(booking.status)) {
       return res.status(400).json({
         success: false,
         message: `Booking is already ${booking.status}.`,
       });
     }
 
+    const sStart = booking.slotStart || booking.startTime;
+    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
+    const pId = booking.provider || booking.providerId;
+
     // Cutoff check for CONFIRMED bookings
     if (booking.status === "confirmed") {
       const settings = await SettingModel.getSettings();
-      const cutoffHours = settings.cancellationWindowHours || 12;
-      const hoursUntil = getHoursUntilBooking(booking.date, booking.startTime);
+      const cutoffHours = settings.cancellationWindowHours || 24;
+      const hoursUntil = getHoursUntilBooking(booking.date, sStart);
 
       if (hoursUntil < cutoffHours) {
         return res.status(400).json({
@@ -502,15 +541,15 @@ const cancelCustomerBooking = async (req, res) => {
 
     // Email provider
     await sendBookingEmail(
-      booking.providerId,
+      pId,
       "Booking Cancelled by Customer",
-      `Customer cancelled booking ${booking.bookingId} (${booking.serviceTitle}) scheduled for ${booking.date} at ${booking.startTime}.`
+      `Customer cancelled booking ${booking.bookingId} (${title}) scheduled for ${booking.date} at ${sStart}.`
     );
 
     return res.status(200).json({
       success: true,
       message: "Booking cancelled successfully",
-      booking,
+      booking: attachBookingCompat(booking.toObject()),
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -531,23 +570,29 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    const booking = await BookingModel.findOne({ _id: id, customerId });
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ customer: customerId }, { customerId }],
+    });
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    if (["completed", "cancelled", "no_show"].includes(booking.status)) {
+    if (["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"].includes(booking.status)) {
       return res.status(400).json({
         success: false,
         message: `Cannot reschedule a booking that is ${booking.status}.`,
       });
     }
 
+    const sStart = booking.slotStart || booking.startTime;
+    const pId = booking.provider || booking.providerId;
+
     // Cutoff check for CONFIRMED bookings
     if (booking.status === "confirmed") {
       const settings = await SettingModel.getSettings();
-      const cutoffHours = settings.cancellationWindowHours || 12;
-      const hoursUntil = getHoursUntilBooking(booking.date, booking.startTime);
+      const cutoffHours = settings.cancellationWindowHours || 24;
+      const hoursUntil = getHoursUntilBooking(booking.date, sStart);
 
       if (hoursUntil < cutoffHours) {
         return res.status(400).json({
@@ -557,9 +602,9 @@ const rescheduleBooking = async (req, res) => {
       }
     }
 
-    // Fetch provider and service to validate new slot
+    // Fetch provider to validate new slot
     const provider = await UserModel.findOne({
-      _id: booking.providerId,
+      _id: pId,
       role: "PROVIDER",
       providerStatus: "approved",
       isBlocked: false,
@@ -572,19 +617,13 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    const service = await ServiceModel.findById(booking.serviceId);
-    if (!service) {
-      return res.status(400).json({
-        success: false,
-        message: "Service definition not found",
-      });
-    }
+    const serviceDuration = booking.durationMinutes || 60;
 
     // Validate new slot (excluding current booking from collision)
     const availableSlots = await generateAvailableSlots({
       provider,
       date,
-      service,
+      durationMinutes: serviceDuration,
       excludeBookingId: booking._id,
     });
 
@@ -596,32 +635,27 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    // Append to history
-    booking.rescheduleHistory.push({
-      fromDate: booking.date,
-      fromStartTime: booking.startTime,
-      at: new Date(),
-    });
-
     booking.date = date;
-    booking.startTime = newSlot.startTime;
-    booking.endTime = newSlot.endTime;
+    booking.slotStart = newSlot.startTime;
+    booking.slotEnd = newSlot.endTime;
     booking.reminder24hSent = false;
     booking.reminder1hSent = false;
 
     await booking.save();
 
+    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
+
     // Email provider
     await sendBookingEmail(
-      booking.providerId,
+      pId,
       "Booking Rescheduled",
-      `Booking ${booking.bookingId} (${booking.serviceTitle}) has been rescheduled by customer to ${date} at ${newSlot.startTime}.`
+      `Booking ${booking.bookingId} (${title}) has been rescheduled by customer to ${date} at ${newSlot.startTime}.`
     );
 
     return res.status(200).json({
       success: true,
       message: "Booking rescheduled successfully",
-      booking,
+      booking: attachBookingCompat(booking.toObject()),
     });
   } catch (error) {
     if (error.code === 11000) {

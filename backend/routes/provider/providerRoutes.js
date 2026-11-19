@@ -17,6 +17,18 @@ const {
   updateProviderBookingStatus,
   cancelProviderBooking,
   getMyPayments,
+  // New actions
+  acceptBooking,
+  rejectBooking,
+  markOnTheWay,
+  markArrived,
+  markCompleted,
+  markCustomerNoShow,
+  getEarnings,
+  getMyServices,
+  createService,
+  updateService,
+  deleteService,
 } = require("../../controllers/provider/providerController");
 
 const router = express.Router();
@@ -44,6 +56,22 @@ router.get("/registration-fee/verify", verifyRegistrationFee);
 router.get("/bookings", getProviderBookings);
 router.put("/bookings/:id/status", updateProviderBookingStatus);
 router.post("/bookings/:id/cancel", cancelProviderBooking);
+router.post("/bookings/:id/accept", acceptBooking);
+router.post("/bookings/:id/reject", rejectBooking);
+router.put("/bookings/:id/on-the-way", markOnTheWay);
+router.put("/bookings/:id/arrived", markArrived);
+router.put("/bookings/:id/completed", markCompleted);
+router.put("/bookings/:id/customer-no-show", markCustomerNoShow);
+
+// Earnings
+router.get("/earnings", getEarnings);
+
+// Services (Provider services catalog)
+router.get("/services", getMyServices);
+router.post("/services", createService);
+router.put("/services/:id", updateService);
+router.delete("/services/:id", deleteService);
+
 router.get("/payments", getMyPayments);
 
 module.exports = router;

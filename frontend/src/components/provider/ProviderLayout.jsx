@@ -7,12 +7,14 @@ import {
   Clock,
   Users,
   Star,
+  Wallet,
 } from "lucide-react";
 import DashboardLayout from "../common/DashboardLayout";
 
 const navItems = [
   { to: "/provider/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/provider/bookings", label: "Bookings", icon: Clock },
+  { to: "/provider/earnings", label: "Earnings", icon: Wallet },
   { to: "/provider/calendar", label: "Calendar", icon: Calendar },
   { to: "/provider/availability", label: "Availability", icon: Calendar },
   { to: "/provider/customers", label: "Clients", icon: Users },

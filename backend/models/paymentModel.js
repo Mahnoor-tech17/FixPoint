@@ -12,7 +12,7 @@ const PaymentSchema = new Schema(
     },
     type: {
       type: String,
-      enum: ["provider_registration", "booking_fee"],
+      enum: ["provider_registration", "booking_payment"],
       required: true,
       index: true,
     },
@@ -33,28 +33,27 @@ const PaymentSchema = new Schema(
       lowercase: true,
       trim: true,
     },
-    stripeSessionId: {
-      type: String,
-      trim: true,
-      index: true,
-    },
-    stripePaymentIntentId: {
-      type: String,
-      trim: true,
-      index: true,
-    },
+    // Stripe references
+    stripeSessionId: { type: String, trim: true, index: true },
+    stripePaymentIntentId: { type: String, trim: true, index: true },
+
+    // Payment lifecycle status
     status: {
       type: String,
-      enum: ["pending", "paid", "failed", "refunded"],
+      enum: ["pending", "authorized", "captured", "released", "refunded", "failed"],
       default: "pending",
       index: true,
     },
-    paidAt: {
-      type: Date,
-    },
-    refundedAt: {
-      type: Date,
-    },
+
+    // Timestamps for each state transition
+    authorizedAt: { type: Date },
+    capturedAt: { type: Date },
+    releasedAt: { type: Date },
+    refundedAt: { type: Date },
+    failedAt: { type: Date },
+
+    // Legacy compat
+    paidAt: { type: Date }, // set when captured
   },
   { timestamps: true }
 );

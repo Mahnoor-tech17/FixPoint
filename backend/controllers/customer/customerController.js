@@ -1,14 +1,35 @@
-const { getPasswordError } = require("../../utils/passwordPolicy");
+const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { getPasswordError } = require("../../utils/passwordPolicy");
 const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
 const PaymentModel = require("../../models/paymentModel");
-const { BOOKING_FEE, CURRENCY, SLOT_HOLD_MINUTES } = require("../../config/fees");
-const { createCheckoutSession, getStripe } = require("../../services/stripeService");
-const { getPKTNow, toMinutes, generateAvailableSlots } = require("../../services/slotService");
+const ServiceModel = require("../../models/serviceModel");
+const SettingModel = require("../../models/settingModel");
 const { getNextSequence } = require("../../models/counterModel");
+const {
+  CURRENCY,
+  DEFAULT_COMMISSION_RATE,
+  DEFAULT_RESPONSE_WINDOW_MINUTES,
+  DEFAULT_GRACE_PERIOD_MINUTES,
+  DEFAULT_CANCELLATION_WINDOW_HOURS,
+  SLOT_HOLD_MINUTES,
+} = require("../../config/fees");
+const {
+  createCheckoutSession,
+  getStripe,
+  cancelPaymentIntent,
+  refundPayment,
+} = require("../../services/stripeService");
+const {
+  getPKTNow,
+  toMinutes,
+  calculateRespondBy,
+  generateAvailableSlots,
+} = require("../../services/slotService");
+const { sendMail } = require("../../services/emailService");
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
 
 const SAFE_FIELDS =
   "-password -verificationCode -verificationCodeExpires -resetPasswordToken -resetPasswordTokenExpires";
@@ -126,181 +147,259 @@ const changePassword = async (req, res) => {
   }
 };
 
-// ================= CUSTOMER BOOKINGS =================
-
+// ================= CREATE CUSTOMER BOOKING (Unified Multi-Service Flow) =================
 const createCustomerBooking = async (req, res) => {
   try {
-    const { providerId, date, slotStart, slotEnd, phone, address, notes } = req.body;
+    const {
+      providerId,
+      serviceIds,
+      serviceId, // backward compat
+      date,
+      slotStart,
+      startTime, // backward compat
+      slotEnd,
+      endTime, // backward compat
+      phone,
+      customerPhone, // backward compat
+      address,
+      notes,
+      location,
+    } = req.body;
 
-    if (!providerId || !date || !slotStart || !slotEnd) {
+    const actualSlotStart = slotStart || startTime;
+    let actualSlotEnd = slotEnd || endTime;
+    const actualPhone = (phone || customerPhone || "").trim();
+
+    // 1. Basic validation
+    if (!providerId || !date || !actualSlotStart) {
       return res.status(400).json({
         success: false,
-        message: "providerId, date, slotStart, and slotEnd are required",
+        message: "Provider, date, and slot start time are required.",
       });
     }
 
-    if (!phone || phone.trim().length < 7) {
+    if (!actualPhone || !/^(\+92|0)?3\d{9}$/.test(actualPhone.replace(/[\s-]/g, ""))) {
       return res.status(400).json({
         success: false,
-        message: "A valid contact phone number is required",
+        message: "A valid Pakistani mobile phone number is required (e.g. 03001234567).",
       });
     }
 
-    const addrLine = typeof address === "object" ? address.line || address.street : address;
-    if (!addrLine || addrLine.trim().length < 3) {
+    let addrObj = { line: "", area: "", city: "" };
+    if (typeof address === "object" && address !== null) {
+      addrObj = {
+        line: (address.line || address.street || "").trim(),
+        area: (address.area || "").trim(),
+        city: (address.city || "").trim(),
+      };
+    } else if (typeof address === "string") {
+      addrObj = {
+        line: address.trim(),
+        area: "",
+        city: (req.body.customerCity || "").trim() || "Lahore",
+      };
+    } else {
+      addrObj = {
+        line: (req.body.customerStreet || "").trim(),
+        area: "",
+        city: (req.body.customerCity || "").trim(),
+      };
+    }
+
+    if (!addrObj.line || addrObj.line.length < 3) {
       return res.status(400).json({
         success: false,
-        message: "A valid service address is required",
+        message: "A valid street address of at least 3 characters is required.",
+      });
+    }
+    if (!addrObj.city) {
+      return res.status(400).json({
+        success: false,
+        message: "City is required.",
       });
     }
 
-    // 1. Verify provider visibility & eligibility
+    // 2. Resolve requested services
+    let requestedServiceIds = [];
+    if (Array.isArray(serviceIds) && serviceIds.length > 0) {
+      requestedServiceIds = serviceIds;
+    } else if (serviceId) {
+      requestedServiceIds = [serviceId];
+    }
+
+    if (requestedServiceIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one service must be selected.",
+      });
+    }
+
+    // 3. Verify provider
     const provider = await UserModel.findOne({
       _id: providerId,
       role: "PROVIDER",
       providerStatus: "approved",
       registrationFeePaid: true,
-      isBlocked: { $ne: true },
+      isBlocked: false,
+      isSuspendedPendingReview: { $ne: true },
     });
 
     if (!provider) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: "Provider is not available for booking",
+        message: "Provider is unavailable or suspended.",
       });
     }
 
-    // 2. Verify date & slot is in provider's available slots
-    const availableSlots = await generateAvailableSlots({ provider, date });
-    const matchingSlot = availableSlots.find(
-      (s) => s.startTime === slotStart && s.endTime === slotEnd
+    // 4. Fetch provider's services matching requested IDs
+    const matchedServices = await ServiceModel.find({
+      _id: { $in: requestedServiceIds },
+      providerId: provider._id,
+      isActive: true,
+    });
+
+    if (matchedServices.length !== requestedServiceIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more selected services are not offered by this provider or are currently inactive.",
+      });
+    }
+
+    // Build items array and calculate totals
+    const items = matchedServices.map((s) => ({
+      serviceId: s._id,
+      masterServiceId: s.masterServiceId || undefined,
+      title: s.title,
+      price: s.price,
+      durationMinutes: s.durationMinutes,
+    }));
+
+    const total = items.reduce((acc, curr) => acc + curr.price, 0);
+    const totalDurationMinutes = items.reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
+    // If slotEnd wasn't explicitly given, calculate it from slotStart + totalDurationMinutes
+    const startMin = toMinutes(actualSlotStart);
+    if (startMin === null) {
+      return res.status(400).json({ success: false, message: "Invalid slot start time format (HH:mm)." });
+    }
+
+    if (!actualSlotEnd) {
+      const endMin = startMin + totalDurationMinutes;
+      const endH = Math.floor(endMin / 60);
+      const endM = endMin % 60;
+      actualSlotEnd = `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+    }
+
+    // 5. Verify slot availability via slotService
+    const availableSlots = await generateAvailableSlots({
+      provider,
+      date,
+      durationMinutes: totalDurationMinutes,
+    });
+
+    const isSlotAvailable = availableSlots.some(
+      (s) => s.startTime === actualSlotStart
     );
 
-    if (!matchingSlot) {
-      return res.status(400).json({
-        success: false,
-        message: "Selected slot is not available. Please choose an available time slot.",
-      });
-    }
-
-    // 3. Check for existing active booking or hold
-    const now = new Date();
-    const existingConflict = await BookingModel.findOne({
-      $and: [
-        { $or: [{ provider: provider._id }, { providerId: provider._id }] },
-        { date },
-        {
-          $or: [
-            { slotStart, slotEnd },
-            { startTime: slotStart, endTime: slotEnd },
-          ],
-        },
-        {
-          $or: [
-            { status: "confirmed" },
-            { status: "pending_payment", slotHoldExpiresAt: { $gt: now } },
-          ],
-        },
-      ],
-    });
-
-    if (existingConflict) {
+    if (!isSlotAvailable) {
       return res.status(409).json({
         success: false,
-        message: "This slot is no longer available. Please select another slot.",
+        message: "The requested time slot is not available. Please choose another time slot.",
       });
     }
 
-    // 4. Calculate duration & estimated price
-    const startMin = toMinutes(slotStart);
-    const endMin = toMinutes(slotEnd);
-    const durationMinutes = endMin - startMin;
-    if (durationMinutes < 30) {
-      return res.status(400).json({
-        success: false,
-        message: "Booking duration must be at least 30 minutes",
-      });
-    }
+    // 6. Fetch platform settings for commission, deadlines, hold window
+    const settings = await SettingModel.getSettings();
+    const commissionRate =
+      settings.commissionRate !== undefined
+        ? settings.commissionRate
+        : (settings.commissionPercent ? settings.commissionPercent / 100 : DEFAULT_COMMISSION_RATE);
 
-    const estimatedPrice = 0; // Service charge paid directly to provider offline
-    const slotHoldExpiresAt = new Date(Date.now() + (SLOT_HOLD_MINUTES || 10) * 60 * 1000);
+    const commissionAmount = Math.round(total * commissionRate);
+    const providerAmount = total - commissionAmount;
 
-    const fullAddress = {
-      line: typeof address === "object" ? (address.line || address.street || "") : address.trim(),
-      area: typeof address === "object" ? (address.area || "") : "",
-      city: typeof address === "object" ? (address.city || provider.city || "") : (provider.city || ""),
-    };
+    const responseWindow = settings.responseWindowMinutes || DEFAULT_RESPONSE_WINDOW_MINUTES;
+    const gracePeriod = settings.gracePeriodMinutes || DEFAULT_GRACE_PERIOD_MINUTES;
+    const holdMinutes = settings.slotHoldMinutes || SLOT_HOLD_MINUTES;
 
-    // 5. Create Booking in pending_payment state with 10-min hold
+    const respondBy = calculateRespondBy(date, actualSlotStart, responseWindow, gracePeriod);
+    const slotHoldExpiresAt = new Date(Date.now() + holdMinutes * 60 * 1000);
+
+    // 7. Generate atomic booking ID
     const seq = await getNextSequence("booking");
-    const bookingId = `FP-${String(seq).padStart(6, "0")}`;
+    const humanBookingId = `FP-${String(seq).padStart(6, "0")}`;
 
-    const booking = await BookingModel.create({
-      bookingId,
-      customer: req.user.userId,
-      customerId: req.user.userId,
-      provider: provider._id,
-      providerId: provider._id,
-      category: provider.serviceCategory,
-      categorySlug: provider.serviceCategory,
-      hourlyRate: 0,
-      date,
-      slotStart,
-      startTime: slotStart,
-      slotEnd,
-      endTime: slotEnd,
-      durationMinutes,
-      estimatedPrice,
-      priceSnapshot: estimatedPrice,
-      address: fullAddress,
-      phone: phone.trim(),
-      customerPhone: phone.trim(),
-      customerCity: fullAddress.city,
-      customerStreet: fullAddress.line,
-      notes: notes ? notes.trim() : "",
-      status: "pending_payment",
-      slotHoldExpiresAt,
-    });
+    // 8. Create Booking record
+    let booking;
+    try {
+      booking = await BookingModel.create({
+        bookingId: humanBookingId,
+        customer: req.user.userId,
+        provider: provider._id,
+        items,
+        total,
+        commissionRate,
+        commissionAmount,
+        providerAmount,
+        date,
+        slotStart: actualSlotStart,
+        slotEnd: actualSlotEnd,
+        durationMinutes: totalDurationMinutes,
+        address: addrObj,
+        location: location || undefined,
+        phone: actualPhone,
+        notes: (notes || "").trim(),
+        status: "pending_payment",
+        paymentStatus: "pending",
+        slotHoldExpiresAt,
+        respondBy,
+      });
+    } catch (err) {
+      if (err.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          message: "This time slot was just booked by another user. Please select another slot.",
+        });
+      }
+      throw err;
+    }
 
-    // 6. Create Payment record for Rs 100 booking fee
+    // 9. Create Payment record for booking_payment
     const payment = await PaymentModel.create({
       user: req.user.userId,
-      paymentType: "booking_fee",
-      type: "booking_fee",
-      amount: BOOKING_FEE,
-      currency: CURRENCY || "pkr",
-      customer: req.user.userId,
-      provider: provider._id,
+      type: "booking_payment",
+      amount: total,
+      currency: CURRENCY,
       booking: booking._id,
       status: "pending",
     });
 
-    // 7. Create Stripe Checkout Session (release the slot hold if Stripe fails)
+    // 10. Create Stripe Checkout Session with manual capture (Authorization / Hold)
     let session;
     try {
       session = await createCheckoutSession({
-        amount: BOOKING_FEE,
-        currency: CURRENCY || "pkr",
-        name: `FixPoint Booking Fee - ${provider.firstName} ${provider.lastName}`,
+        amount: total,
+        currency: CURRENCY,
+        name: `FixPoint Services Hold (${humanBookingId}) - ${provider.firstName} ${provider.lastName}`,
         successUrl: `${FRONTEND_URL}/customer/payment-success?session_id={CHECKOUT_SESSION_ID}&booking_id=${booking._id}`,
         cancelUrl: `${FRONTEND_URL}/customer/payment-cancelled?booking_id=${booking._id}`,
+        captureMethod: "manual", // HOLDS full amount on card; charged only upon acceptance!
         metadata: {
-          type: "booking_fee",
-          paymentType: "booking_fee",
-          userId: req.user.userId.toString(),
-          customerId: req.user.userId.toString(),
-          providerId: provider._id.toString(),
+          type: "booking_payment",
           bookingId: booking._id.toString(),
           paymentId: payment._id.toString(),
+          customerId: req.user.userId.toString(),
+          providerId: provider._id.toString(),
         },
         customerEmail: req.user.email,
       });
-    } catch (stripeError) {
+    } catch (stripeErr) {
       booking.status = "expired";
+      booking.paymentStatus = "failed";
       await booking.save();
       payment.status = "failed";
       await payment.save();
-      throw stripeError;
+      throw stripeErr;
     }
 
     payment.stripeSessionId = session.id;
@@ -309,10 +408,13 @@ const createCustomerBooking = async (req, res) => {
     return res.status(201).json({
       success: true,
       bookingId: booking._id,
+      humanBookingId: booking.bookingId,
       checkoutUrl: session.url,
       expiresAt: slotHoldExpiresAt,
-      estimatedPrice,
-      bookingFee: BOOKING_FEE,
+      respondBy,
+      total,
+      commissionAmount,
+      providerAmount,
     });
   } catch (error) {
     console.error("createCustomerBooking error:", error);
@@ -320,31 +422,31 @@ const createCustomerBooking = async (req, res) => {
   }
 };
 
+// ================= RESUME / RETRY PAYMENT =================
 const payCustomerBooking = async (req, res) => {
   try {
     const { id } = req.params;
 
     const booking = await BookingModel.findOne({
       _id: id,
-      $or: [{ customer: req.user.userId }, { customerId: req.user.userId }],
+      customer: req.user.userId,
     }).populate("provider", "firstName lastName");
 
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    if (booking.status === "confirmed") {
-      return res.status(400).json({ success: false, message: "Booking is already paid and confirmed" });
-    }
-
     if (booking.status !== "pending_payment") {
-      return res.status(400).json({ success: false, message: `Booking cannot be paid (status: ${booking.status})` });
+      return res.status(400).json({
+        success: false,
+        message: `Booking cannot be paid (current status: ${booking.status})`,
+      });
     }
 
-    // Check hold expiration
     const now = new Date();
     if (!booking.slotHoldExpiresAt || booking.slotHoldExpiresAt <= now) {
       booking.status = "expired";
+      booking.paymentStatus = "failed";
       await booking.save();
       return res.status(400).json({
         success: false,
@@ -354,39 +456,38 @@ const payCustomerBooking = async (req, res) => {
 
     let payment = await PaymentModel.findOne({
       booking: booking._id,
-      type: "booking_fee",
+      type: "booking_payment",
       status: "pending",
     });
 
     if (!payment) {
       payment = await PaymentModel.create({
         user: req.user.userId,
-        paymentType: "booking_fee",
-        type: "booking_fee",
-        amount: BOOKING_FEE,
-        currency: CURRENCY || "pkr",
-        customer: req.user.userId,
-        provider: booking.provider?._id || booking.provider,
+        type: "booking_payment",
+        amount: booking.total,
+        currency: CURRENCY,
         booking: booking._id,
         status: "pending",
       });
     }
 
-    const providerName = booking.provider ? `${booking.provider.firstName} ${booking.provider.lastName}` : "Provider";
+    const providerName = booking.provider
+      ? `${booking.provider.firstName} ${booking.provider.lastName}`
+      : "Provider";
+
     const session = await createCheckoutSession({
-      amount: BOOKING_FEE,
-      currency: CURRENCY || "pkr",
-      name: `FixPoint Booking Fee - ${providerName}`,
+      amount: booking.total,
+      currency: CURRENCY,
+      name: `FixPoint Services Hold (${booking.bookingId}) - ${providerName}`,
       successUrl: `${FRONTEND_URL}/customer/payment-success?session_id={CHECKOUT_SESSION_ID}&booking_id=${booking._id}`,
       cancelUrl: `${FRONTEND_URL}/customer/payment-cancelled?booking_id=${booking._id}`,
+      captureMethod: "manual",
       metadata: {
-        type: "booking_fee",
-        paymentType: "booking_fee",
-        userId: req.user.userId.toString(),
-        customerId: req.user.userId.toString(),
-        providerId: (booking.provider?._id || booking.provider).toString(),
+        type: "booking_payment",
         bookingId: booking._id.toString(),
         paymentId: payment._id.toString(),
+        customerId: req.user.userId.toString(),
+        providerId: booking.provider?._id?.toString() || booking.provider.toString(),
       },
       customerEmail: req.user.email,
     });
@@ -404,6 +505,64 @@ const payCustomerBooking = async (req, res) => {
   }
 };
 
+// ================= VERIFY PAYMENT (Stripe Session Check fallback) =================
+const verifyBookingPayment = async (req, res) => {
+  try {
+    const { session_id } = req.query;
+    if (!session_id) {
+      return res.status(400).json({ success: false, message: "session_id missing" });
+    }
+
+    const session = await getStripe().checkout.sessions.retrieve(session_id);
+    const meta = session.metadata || {};
+
+    if (meta.type !== "booking_payment" || meta.customerId !== String(req.user.userId)) {
+      return res.status(403).json({ success: false, message: "Session does not belong to you" });
+    }
+
+    const payment = await PaymentModel.findOne({ stripeSessionId: session.id });
+    if (payment && !["authorized", "captured"].includes(payment.status)) {
+      payment.status = "authorized";
+      payment.authorizedAt = new Date();
+      payment.stripePaymentIntentId = session.payment_intent || payment.stripePaymentIntentId;
+      await payment.save();
+    }
+
+    const booking = await BookingModel.findById(meta.bookingId).populate("provider customer");
+    if (!booking) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (booking.status === "pending_payment") {
+      booking.status = "awaiting_provider";
+      booking.paymentStatus = "authorized";
+      booking.stripePaymentIntentId = session.payment_intent || booking.stripePaymentIntentId;
+      booking.slotHoldExpiresAt = undefined;
+      await booking.save();
+
+      // Send email alert to provider
+      if (booking.provider?.email) {
+        sendMail({
+          to: booking.provider.email,
+          subject: `New FixPoint Request: ${booking.bookingId}`,
+          text: `Hi ${booking.provider.firstName},\n\nYou have received a new booking request (${booking.bookingId}) on ${booking.date} at ${booking.slotStart}.\n\nPlease accept or reject within 2 hours in your FixPoint portal.\n\nBest regards,\nFixPoint Team`,
+        }).catch(() => {});
+      }
+    }
+
+    return res.json({
+      success: true,
+      status: booking.status,
+      bookingId: booking.bookingId,
+      booking,
+    });
+  } catch (error) {
+    console.error("verifyBookingPayment error:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ================= CANCEL CUSTOMER BOOKING =================
 const cancelCustomerBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -411,147 +570,290 @@ const cancelCustomerBooking = async (req, res) => {
 
     const booking = await BookingModel.findOne({
       _id: id,
-      $or: [{ customer: req.user.userId }, { customerId: req.user.userId }],
-    });
+      customer: req.user.userId,
+    }).populate("provider customer");
 
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    if (["completed", "cancelled", "expired"].includes(booking.status)) {
+    if (["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"].includes(booking.status)) {
       return res.status(400).json({
         success: false,
         message: `Booking cannot be cancelled as it is already ${booking.status}`,
       });
     }
 
-    if (booking.status === "confirmed") {
-      // Rule: Customer can cancel only if slot start is > 24 hours away
-      const slotStartTime = new Date(`${booking.date}T${booking.slotStart || booking.startTime}:00+05:00`);
-      const now = new Date();
-      const hoursUntilSlot = (slotStartTime - now) / (1000 * 60 * 60);
+    const settings = await SettingModel.getSettings();
+    const cancellationWindowHours = settings.cancellationWindowHours || DEFAULT_CANCELLATION_WINDOW_HOURS;
 
-      if (hoursUntilSlot <= 24) {
-        return res.status(400).json({
-          success: false,
-          message: "Bookings can only be cancelled at least 24 hours in advance",
-        });
+    // Awaiting provider -> release hold completely
+    if (booking.status === "awaiting_provider") {
+      if (booking.stripePaymentIntentId) {
+        try {
+          await cancelPaymentIntent(booking.stripePaymentIntentId);
+        } catch (stripeErr) {
+          console.warn("Cancel hold warning:", stripeErr.message);
+        }
       }
 
       booking.status = "cancelled";
+      booking.paymentStatus = "released";
       booking.cancelledBy = "customer";
-      booking.cancelReason = reason ? reason.trim() : "Cancelled by customer";
-      booking.cancelledAt = new Date();
+      booking.cancelReason = reason ? reason.trim() : "Cancelled by customer before provider response";
       await booking.save();
+
+      const payment = await PaymentModel.findOne({ booking: booking._id, type: "booking_payment" });
+      if (payment) {
+        payment.status = "released";
+        payment.releasedAt = new Date();
+        await payment.save();
+      }
 
       return res.status(200).json({
         success: true,
-        message: "Booking cancelled successfully. Note: Booking fee is non-refundable for customer cancellations.",
+        message: "Booking request cancelled and card hold released.",
         booking,
       });
     }
 
-    // If pending_payment, cancel directly
-    booking.status = "cancelled";
-    booking.cancelledBy = "customer";
-    booking.cancelReason = reason ? reason.trim() : "Cancelled by customer";
-    booking.cancelledAt = new Date();
-    await booking.save();
+    // Pending payment -> simple cancel
+    if (booking.status === "pending_payment") {
+      booking.status = "cancelled";
+      booking.paymentStatus = "released";
+      booking.cancelledBy = "customer";
+      booking.cancelReason = reason ? reason.trim() : "Cancelled by customer";
+      await booking.save();
 
-    return res.status(200).json({
-      success: true,
-      message: "Booking cancelled successfully",
-      booking,
+      return res.status(200).json({
+        success: true,
+        message: "Booking cancelled successfully",
+        booking,
+      });
+    }
+
+    // Confirmed booking cancellation policy:
+    // Free (100% refund) until 24 hours before the slot; after that only the commission is kept (80% refund).
+    if (booking.status === "confirmed") {
+      const slotStartTime = new Date(`${booking.date}T${booking.slotStart}:00+05:00`);
+      const now = new Date();
+      const hoursUntilSlot = (slotStartTime - now) / (1000 * 60 * 60);
+
+      let refundAmount = booking.total;
+      let policyNote = "Full refund issued to your card.";
+
+      if (hoursUntilSlot < cancellationWindowHours) {
+        // Commission kept; refund provider share
+        refundAmount = booking.providerAmount;
+        policyNote = `Cancelled within ${cancellationWindowHours} hours of appointment. Platform commission retained; Rs ${refundAmount} refunded to your card.`;
+      }
+
+      if (booking.stripePaymentIntentId) {
+        try {
+          await refundPayment(booking.stripePaymentIntentId, refundAmount);
+        } catch (refundErr) {
+          console.error("Stripe refund error:", refundErr.message);
+        }
+      }
+
+      booking.status = "cancelled";
+      booking.paymentStatus = "refunded";
+      booking.cancelledBy = "customer";
+      booking.cancelReason = reason ? reason.trim() : "Cancelled by customer";
+      await booking.save();
+
+      const payment = await PaymentModel.findOne({ booking: booking._id, type: "booking_payment" });
+      if (payment) {
+        payment.status = "refunded";
+        payment.refundedAt = new Date();
+        await payment.save();
+      }
+
+      // Notify provider
+      if (booking.provider?.email) {
+        sendMail({
+          to: booking.provider.email,
+          subject: `Booking Cancelled: ${booking.bookingId}`,
+          text: `Hi ${booking.provider.firstName},\n\nCustomer cancelled booking ${booking.bookingId} for ${booking.date} at ${booking.slotStart}.\nReason: ${booking.cancelReason}\n\nBest regards,\nFixPoint Team`,
+        }).catch(() => {});
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Booking cancelled successfully. ${policyNote}`,
+        booking,
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: `Booking cannot be cancelled at this stage (${booking.status}).`,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// ================= CUSTOMER MARKS PROVIDER NO-SHOW (1 hr after slot start) =================
+const customerMarksProviderNoShow = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const booking = await BookingModel.findOne({
+      _id: id,
+      customer: req.user.userId,
+    }).populate("provider customer");
+
+    if (!booking) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (booking.status !== "confirmed" && booking.status !== "on_the_way") {
+      return res.status(400).json({
+        success: false,
+        message: `Provider no-show can only be reported for confirmed bookings where provider has not started job.`,
+      });
+    }
+
+    // Check that at least 1 hour has passed since slot start time in PKT
+    const pktNow = getPKTNow();
+    const slotStartMin = toMinutes(booking.slotStart);
+    const nowMin = toMinutes(pktNow.time);
+
+    const isAfterOneHour =
+      booking.date < pktNow.date ||
+      (booking.date === pktNow.date && nowMin >= slotStartMin + 60);
+
+    if (!isAfterOneHour) {
+      return res.status(400).json({
+        success: false,
+        message: "You can report a provider no-show 1 hour after the scheduled appointment start time.",
+      });
+    }
+
+    // Full refund to customer
+    if (booking.stripePaymentIntentId) {
+      try {
+        await refundPayment(booking.stripePaymentIntentId);
+      } catch (refundErr) {
+        console.error("Stripe refund error:", refundErr.message);
+      }
+    }
+
+    booking.status = "provider_no_show";
+    booking.paymentStatus = "refunded";
+    await booking.save();
+
+    const payment = await PaymentModel.findOne({ booking: booking._id, type: "booking_payment" });
+    if (payment) {
+      payment.status = "refunded";
+      payment.refundedAt = new Date();
+      await payment.save();
+    }
+
+    // Provider penalty logic (configurable thresholds)
+    const provider = await UserModel.findById(booking.provider._id || booking.provider);
+    let penaltyApplied = "warned";
+
+    if (provider) {
+      provider.noShowCount = (provider.noShowCount || 0) + 1;
+      const count = provider.noShowCount;
+
+      if (count === 1) {
+        provider.penaltyLevel = "warned";
+        penaltyApplied = "warning issued";
+      } else if (count === 2) {
+        provider.penaltyLevel = "rank_reduced";
+        penaltyApplied = "ranking reduced";
+      } else {
+        provider.penaltyLevel = "suspended_pending";
+        provider.isSuspendedPendingReview = true;
+        provider.isBlocked = true;
+        penaltyApplied = "account suspended pending admin review";
+      }
+
+      await provider.save();
+
+      // Email provider
+      sendMail({
+        to: provider.email,
+        subject: `No-Show Violation Alert - ${booking.bookingId}`,
+        text: `Hi ${provider.firstName},\n\nYou were marked as a no-show for booking ${booking.bookingId} on ${booking.date} at ${booking.slotStart}.\n\nPenalty status: ${penaltyApplied} (Total no-shows: ${count}).\nPlease contact FixPoint admin if you have any questions.\n\nBest regards,\nFixPoint Safety Team`,
+      }).catch(() => {});
+    }
+
+    // Email customer
+    sendMail({
+      to: req.user.email,
+      subject: `Provider No-Show Confirmed - Full Refund Issued (${booking.bookingId})`,
+      text: `Hi ${req.user.firstName || "there"},\n\nWe apologize for the inconvenience. A full refund of PKR ${booking.total} has been issued to your card.\n\nYou can easily select another provider with prefilled details on FixPoint.\n\nBest regards,\nFixPoint Team`,
+    }).catch(() => {});
+
+    return res.status(200).json({
+      success: true,
+      message: "Provider marked as no-show. Full refund has been issued to your card.",
+      booking,
+      penaltyApplied,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ================= LIST CUSTOMER BOOKINGS =================
 const getCustomerBookings = async (req, res) => {
   try {
     const { scope, status, page = 1, limit = 20 } = req.query;
 
-    const query = {
-      $and: [{ $or: [{ customer: req.user.userId }, { customerId: req.user.userId }] }],
-    };
-
+    const query = { customer: req.user.userId };
     const pktNow = getPKTNow();
 
     if (status) {
       query.status = status;
     } else if (scope === "upcoming") {
-      query.status = { $in: ["confirmed", "pending_payment"] };
-      query.$and.push({
-        $or: [
-          { date: { $gt: pktNow.date } },
-          { date: pktNow.date, slotEnd: { $gte: pktNow.time } },
-          { date: pktNow.date, endTime: { $gte: pktNow.time } },
-        ],
-      });
+      query.status = { $in: ["awaiting_provider", "confirmed", "on_the_way", "in_progress", "pending_payment"] };
     } else if (scope === "past") {
-      query.$and.push({ $or: [
-        { status: { $in: ["completed", "cancelled", "no-show", "no_show", "expired"] } },
-        {
-          status: "confirmed",
-          $or: [
-            { date: { $lt: pktNow.date } },
-            { date: pktNow.date, slotEnd: { $lt: pktNow.time } },
-            { date: pktNow.date, endTime: { $lt: pktNow.time } },
-          ],
-        },
-      ] });
+      query.status = {
+        $in: ["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show"],
+      };
     }
 
     const sortOrder = scope === "upcoming" ? { date: 1, slotStart: 1 } : { date: -1, slotStart: -1 };
 
     const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
-    const bookings = await BookingModel.find(query)
-      .sort(sortOrder)
-      .skip(skip)
-      .limit(parseInt(limit, 10))
-      .populate("provider", "firstName lastName profilePhoto serviceCategory phone")
-      .populate("providerId", "firstName lastName profilePhoto serviceCategory phone")
-      .lean();
+    const [bookings, total] = await Promise.all([
+      BookingModel.find(query)
+        .sort(sortOrder)
+        .skip(skip)
+        .limit(parseInt(limit, 10))
+        .populate("provider", "firstName lastName profilePhoto serviceCategory phone rating")
+        .populate("items.serviceId", "title price durationMinutes images")
+        .lean(),
+      BookingModel.countDocuments(query),
+    ]);
 
-    const total = await BookingModel.countDocuments(query);
-
-    // Sanitize output for customer
-    // PRIVACY:
-    // 1. Only include provider phone if booking status is "confirmed" or "completed"
-    // 2. NEVER include provider email
+    // Privacy masking: Reveal provider phone only when booking is confirmed / in progress / completed
     const sanitized = bookings.map((b) => {
-      const prov = b.provider || b.providerId;
-      const isConfirmedOrCompleted = ["confirmed", "completed"].includes(b.status);
+      const isConfirmedOrLater = [
+        "confirmed",
+        "on_the_way",
+        "in_progress",
+        "completed",
+      ].includes(b.status);
 
       return {
-        _id: b._id,
-        bookingId: b.bookingId,
-        status: b.status,
-        date: b.date,
-        slotStart: b.slotStart || b.startTime,
-        slotEnd: b.slotEnd || b.endTime,
-        durationMinutes: b.durationMinutes,
-        category: b.category || b.categorySlug,
-        hourlyRate: b.hourlyRate,
-        estimatedPrice: b.estimatedPrice || b.priceSnapshot,
-        address: b.address?.line ? b.address : { line: b.customerStreet || b.address?.street, area: b.address?.area, city: b.customerCity || b.address?.city },
-        phone: b.phone || b.customerPhone,
-        notes: b.notes,
-        slotHoldExpiresAt: b.slotHoldExpiresAt,
-        provider: prov
+        ...b,
+        provider: b.provider
           ? {
-              _id: prov._id,
-              firstName: prov.firstName,
-              lastName: prov.lastName,
-              profilePhoto: prov.profilePhoto,
-              serviceCategory: prov.serviceCategory,
-              phone: isConfirmedOrCompleted ? prov.phone : null,
+              _id: b.provider._id,
+              firstName: b.provider.firstName,
+              lastName: b.provider.lastName,
+              profilePhoto: b.provider.profilePhoto,
+              serviceCategory: b.provider.serviceCategory,
+              rating: b.provider.rating,
+              phone: isConfirmedOrLater ? b.provider.phone : null,
             }
           : null,
-        cancelledBy: b.cancelledBy,
-        cancelReason: b.cancelReason,
-        createdAt: b.createdAt,
       };
     });
 
@@ -561,7 +863,7 @@ const getCustomerBookings = async (req, res) => {
       pagination: {
         total,
         page: parseInt(page, 10),
-        pages: Math.ceil(total / parseInt(limit, 10)),
+        pages: Math.ceil(total / parseInt(limit, 10)) || 1,
       },
     });
   } catch (error) {
@@ -569,7 +871,7 @@ const getCustomerBookings = async (req, res) => {
   }
 };
 
-
+// ================= CUSTOMER PAYMENTS LIST =================
 const getMyPayments = async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -581,83 +883,23 @@ const getMyPayments = async (req, res) => {
         .limit(parseInt(limit, 10))
         .populate({
           path: "booking",
-          select: "bookingId date slotStart slotEnd category provider",
+          select: "bookingId date slotStart slotEnd total items status provider",
           populate: { path: "provider", select: "firstName lastName serviceCategory" },
         })
         .lean(),
       PaymentModel.countDocuments({ user: req.user.userId }),
     ]);
+
     return res.status(200).json({
       success: true,
       payments,
-      pagination: { total, page: parseInt(page, 10), pages: Math.ceil(total / parseInt(limit, 10)) },
+      pagination: {
+        total,
+        page: parseInt(page, 10),
+        pages: Math.ceil(total / parseInt(limit, 10)) || 1,
+      },
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-
-// Webhook ke bina bhi booking confirm karne ke liye: Stripe se session poochh kar status update karta hai
-const verifyBookingPayment = async (req, res) => {
-  try {
-    const { session_id } = req.query;
-    if (!session_id) {
-      return res.status(400).json({ success: false, message: "session_id missing" });
-    }
-
-    const session = await getStripe().checkout.sessions.retrieve(session_id);
-    const meta = session.metadata || {};
-
-    if (meta.type !== "booking_fee" || meta.userId !== String(req.user.userId)) {
-      return res.status(403).json({ success: false, message: "Session does not belong to you" });
-    }
-    if (session.payment_status !== "paid") {
-      return res.json({ success: false, status: session.payment_status });
-    }
-
-    const payment = await PaymentModel.findOne({ stripeSessionId: session.id });
-    if (payment && payment.status !== "paid") {
-      payment.status = "paid";
-      payment.paidAt = new Date();
-      payment.stripePaymentIntentId = session.payment_intent || payment.stripePaymentIntentId;
-      await payment.save();
-    }
-
-    const booking = await BookingModel.findById(meta.bookingId);
-    if (!booking) {
-      return res.status(404).json({ success: false, message: "Booking not found" });
-    }
-
-    if (booking.status === "pending_payment") {
-      booking.status = "confirmed";
-      booking.slotHoldExpiresAt = undefined;
-      await booking.save();
-    } else if (booking.status === "expired") {
-      // Paid hone ke baad hold expire ho gaya ho: slot khali ho to confirm kar do
-      const clash = await BookingModel.findOne({
-        _id: { $ne: booking._id },
-        $and: [
-          { $or: [{ provider: booking.provider }, { providerId: booking.provider }] },
-          { date: booking.date },
-          { $or: [{ slotStart: booking.slotStart }, { startTime: booking.slotStart }] },
-          { status: "confirmed" },
-        ],
-      });
-      if (clash) {
-        return res.status(409).json({
-          success: false,
-          message: "Payment received but slot was taken. Please contact support for a refund.",
-        });
-      }
-      booking.status = "confirmed";
-      booking.slotHoldExpiresAt = undefined;
-      await booking.save();
-    }
-
-    return res.json({ success: true, status: booking.status });
-  } catch (error) {
-    console.error("verifyBookingPayment error:", error.message);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -670,6 +912,7 @@ module.exports = {
   payCustomerBooking,
   verifyBookingPayment,
   cancelCustomerBooking,
+  customerMarksProviderNoShow,
   getCustomerBookings,
   getMyPayments,
 };

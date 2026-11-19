@@ -12,6 +12,7 @@ const {
   cancelCustomerBooking,
   getCustomerBookings,
   getMyPayments,
+  customerMarksProviderNoShow,
 } = require("../../controllers/customer/customerController");
 
 const router = express.Router();
@@ -22,11 +23,12 @@ router.get("/profile", getProfile);
 router.put("/profile", updateProfile);
 router.put("/change-password", changePassword);
 
-// Customer booking endpoints (Task 5)
+// Customer booking endpoints
 router.post("/bookings", createCustomerBooking);
 router.get("/bookings/verify-payment", verifyBookingPayment);
 router.post("/bookings/:id/pay", payCustomerBooking);
 router.post("/bookings/:id/cancel", cancelCustomerBooking);
+router.post("/bookings/:id/no-show", customerMarksProviderNoShow);
 router.get("/bookings", getCustomerBookings);
 router.get("/payments", getMyPayments);
 

@@ -20,6 +20,14 @@ const {
   getReports,
   exportBookingsCsv,
   getPayments,
+  getAdminServices,
+  toggleServiceActive,
+  deleteAdminService,
+  getMasterServices,
+  createMasterService,
+  updateMasterService,
+  deleteMasterService,
+  markProviderPaid,
 } = require("../../controllers/admin/adminController");
 
 const router = express.Router();
@@ -49,5 +57,17 @@ router.get("/reports", getReports);
 router.get("/reports/export-csv", exportBookingsCsv);
 
 router.get("/payments", getPayments);
+router.put("/payments/providers/:id/mark-paid", markProviderPaid);
+
+// Provider services management
+router.get("/services", getAdminServices);
+router.put("/services/:id/toggle-active", toggleServiceActive);
+router.delete("/services/:id", deleteAdminService);
+
+// Master service catalog
+router.get("/master-services", getMasterServices);
+router.post("/master-services", createMasterService);
+router.put("/master-services/:id", updateMasterService);
+router.delete("/master-services/:id", deleteMasterService);
 
 module.exports = router;

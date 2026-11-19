@@ -1,4 +1,4 @@
-
+﻿
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
@@ -646,84 +646,182 @@ const exportBookingsCsv = async (req, res) => {
 // ================= PAYMENTS =================
 const getPayments = async (req, res) => {
   try {
-    const { type, status, page = 1, limit = 20 } = req.query;
- 
-    const query = {};
-    if (type && type !== "all") {
-      query.type = type;
-    }
-    if (status && status !== "all") {
-      query.status = status;
-    }
- 
-    const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
- 
-    const [payments, total, totalsAgg] = await Promise.all([
-      PaymentModel.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit, 10))
-        .populate("user", "firstName lastName email role phone")
-        .populate({
-          path: "booking",
-          select: "bookingId date slotStart slotEnd startTime endTime estimatedPrice status customer provider",
-          populate: [
-            { path: "customer", select: "firstName lastName email" },
-            { path: "provider", select: "firstName lastName email serviceCategory" },
-          ],
-        })
-        .lean(),
-      PaymentModel.countDocuments(query),
-      PaymentModel.aggregate([
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 20, 1), 50);
+
+    // Commission income: sum of commissionAmount on captured/completed bookings
+    const [commissionAgg, pendingPayoutAgg, recentPayments, totalCount] = await Promise.all([
+      BookingModel.aggregate([
         {
-          $group: {
-            _id: null,
-            registrationFees: {
-              $sum: {
-                $cond: [
-                  { $and: [{ $eq: ["$type", "provider_registration"] }, { $eq: ["$status", "paid"] }] },
-                  "$amount",
-                  0,
-                ],
-              },
-            },
-            bookingFees: {
-              $sum: {
-                $cond: [
-                  { $and: [{ $eq: ["$type", "booking_fee"] }, { $eq: ["$status", "paid"] }] },
-                  "$amount",
-                  0,
-                ],
-              },
-            },
-            refunds: {
-              $sum: {
-                $cond: [{ $eq: ["$status", "refunded"] }, "$amount", 0],
-              },
-            },
+          $match: {
+            paymentStatus: "captured",
+            status: { $in: ["confirmed", "on_the_way", "in_progress", "completed", "customer_no_show"] },
           },
         },
+        { $group: { _id: null, totalCommission: { $sum: "$commissionAmount" } } },
       ]),
+      UserModel.aggregate([
+        { $match: { role: "PROVIDER", pendingPayout: { $gt: 0 } } },
+        { $group: { _id: null, totalPending: { $sum: "$pendingPayout" } } },
+      ]),
+      PaymentModel.find()
+        .populate("user", "firstName lastName email role")
+        .populate("booking", "bookingId total commissionAmount providerAmount status")
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      PaymentModel.countDocuments(),
     ]);
- 
-    const totals = totalsAgg[0] || { registrationFees: 0, bookingFees: 0, refunds: 0 };
-    totals.totalRevenue = (totals.registrationFees || 0) + (totals.bookingFees || 0) - (totals.refunds || 0);
- 
+
+    const providersPendingPayout = await UserModel.find({ role: "PROVIDER", pendingPayout: { $gt: 0 } })
+      .select("firstName lastName email phone pendingPayout totalPaidOut")
+      .sort({ pendingPayout: -1 })
+      .lean();
+
     return res.status(200).json({
       success: true,
-      payments,
-      totals,
-      pagination: {
-        total,
-        page: parseInt(page, 10),
-        pages: Math.ceil(total / parseInt(limit, 10)),
+      summary: {
+        totalCommissionEarned: commissionAgg[0]?.totalCommission || 0,
+        totalPendingProviderPayouts: pendingPayoutAgg[0]?.totalPending || 0,
       },
+      providersPendingPayout,
+      payments: recentPayments,
+      pagination: { total: totalCount, page: pageNum, pages: Math.ceil(totalCount / limitNum) },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
  
+// ---- New Admin Functions ----
+const ServiceModel = require("../../models/serviceModel");
+const MasterServiceModel = require("../../models/masterServiceModel");
+
+const getAdminServices = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 20, 1), 50);
+    const filter = {};
+    if (search) {
+      filter.title = new RegExp(String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    }
+    const [services, total] = await Promise.all([
+      ServiceModel.find(filter)
+        .populate("provider", "firstName lastName email")
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      ServiceModel.countDocuments(filter),
+    ]);
+    return res.status(200).json({ success: true, services, pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const toggleServiceActive = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const service = await ServiceModel.findById(id);
+    if (!service) return res.status(404).json({ success: false, message: "Service not found" });
+    service.isActive = !service.isActive;
+    await service.save();
+    return res.status(200).json({ success: true, service });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteAdminService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const activeBooking = await BookingModel.findOne({
+      "items.serviceId": id,
+      status: { $in: ["pending_payment", "awaiting_provider", "confirmed", "on_the_way", "in_progress"] },
+    });
+    if (activeBooking) return res.status(400).json({ success: false, message: "Cannot delete service with active bookings" });
+    await ServiceModel.findByIdAndDelete(id);
+    return res.status(200).json({ success: true, message: "Service deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMasterServices = async (req, res) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 50, 1), 100);
+    const [services, total] = await Promise.all([
+      MasterServiceModel.find().sort({ title: 1 }).skip((pageNum - 1) * limitNum).limit(limitNum).lean(),
+      MasterServiceModel.countDocuments(),
+    ]);
+    return res.status(200).json({ success: true, services, pagination: { total, page: pageNum, pages: Math.ceil(total / limitNum) } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createMasterService = async (req, res) => {
+  try {
+    const { title, categorySlug, description, defaultDurationMinutes, suggestedPrice, serviceType } = req.body;
+    if (!title || !categorySlug) return res.status(400).json({ success: false, message: "title and categorySlug are required" });
+    const service = new MasterServiceModel({
+      title: title.trim(), categorySlug, description: description?.trim(),
+      defaultDurationMinutes: Number(defaultDurationMinutes) || 60,
+      suggestedPrice: Number(suggestedPrice) || 0,
+      serviceType: serviceType || "fixed",
+      isActive: true,
+    });
+    await service.save();
+    return res.status(201).json({ success: true, service });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateMasterService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const service = await MasterServiceModel.findByIdAndUpdate(id, { $set: updates }, { new: true, runValidators: true });
+    if (!service) return res.status(404).json({ success: false, message: "Master service not found" });
+    return res.status(200).json({ success: true, service });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteMasterService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await MasterServiceModel.findByIdAndDelete(id);
+    return res.status(200).json({ success: true, message: "Master service deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markProviderPaid = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount } = req.body;
+    const provider = await UserModel.findById(id);
+    if (!provider || provider.role !== "PROVIDER") return res.status(404).json({ success: false, message: "Provider not found" });
+    const paidAmount = Number(amount) || provider.pendingPayout || 0;
+    provider.pendingPayout = Math.max(0, (provider.pendingPayout || 0) - paidAmount);
+    provider.totalPaidOut = (provider.totalPaidOut || 0) + paidAmount;
+    await provider.save();
+    return res.status(200).json({ success: true, message: `Marked Rs ${paidAmount.toLocaleString()} as paid to provider`, provider });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getStats,
   createUser,
@@ -742,4 +840,12 @@ module.exports = {
   getReports,
   exportBookingsCsv,
   getPayments,
+  getAdminServices,
+  toggleServiceActive,
+  deleteAdminService,
+  getMasterServices,
+  createMasterService,
+  updateMasterService,
+  deleteMasterService,
+  markProviderPaid,
 };

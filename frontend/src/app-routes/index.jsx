@@ -3,7 +3,7 @@ import { PrivateRoute, PublicRoute } from "./private-route";
 
 // Public pages
 import LandingPage from "../pages/customer/LandingPage";
-import SearchPage from "../pages/customer/SearchPage";
+import SearchPage from "../pages/customer/CustomerSearchPage";
 import PublicProviderProfile from "../pages/customer/PublicProviderProfile";
 
 // Auth pages
@@ -37,6 +37,7 @@ import ProviderAvailability from "../pages/provider/ProviderAvailability";
 import ProviderSettings from "../pages/provider/ProviderSettings";
 import ProviderPaymentSuccess from "../pages/provider/ProviderPaymentSuccess";
 import ProviderPaymentCancelled from "../pages/provider/ProviderPaymentCancelled";
+import ProviderEarnings from "../pages/provider/ProviderEarnings";
 import ProviderPayments from "../pages/provider/ProviderPayments";
 
 // Admin pages
@@ -251,6 +252,15 @@ export default function AppRoutes() {
           element={
             <PrivateRoute allowedRoles={["PROVIDER"]}>
               <ProviderPayments />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/provider/earnings"
+          element={
+            <PrivateRoute allowedRoles={["PROVIDER"]}>
+              <ProviderEarnings />
             </PrivateRoute>
           }
         />

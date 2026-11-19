@@ -4,10 +4,10 @@ const Schema = mongoose.Schema;
 
 const BreakSchema = new Schema(
   {
-    start: { type: String, required: true }, // "13:00"
-    end: { type: String, required: true }, // "14:00"
+    start: { type: String, required: true },
+    end: { type: String, required: true },
   },
-  { _id: false },
+  { _id: false }
 );
 
 const DayScheduleSchema = new Schema(
@@ -19,8 +19,8 @@ const DayScheduleSchema = new Schema(
     },
     isWorking: { type: Boolean, default: false },
     isAvailable: { type: Boolean, default: false },
-    startTime: { type: String }, // legacy "09:00"
-    endTime: { type: String }, // legacy "18:00"
+    startTime: { type: String }, // legacy
+    endTime: { type: String },   // legacy
     breaks: { type: [BreakSchema], default: [] },
     slots: {
       type: [
@@ -35,16 +35,16 @@ const DayScheduleSchema = new Schema(
       default: [],
     },
   },
-  { _id: false },
+  { _id: false }
 );
 
 const AvailabilitySchema = new Schema(
   {
     slotDurationMinutes: { type: Number, default: 60 },
     weekly: { type: [DayScheduleSchema], default: [] },
-    daysOff: { type: [String], default: [] }, // ["2026-12-25"]
+    daysOff: { type: [String], default: [] },
   },
-  { _id: false },
+  { _id: false }
 );
 
 const VerificationDocSchema = new Schema(
@@ -53,7 +53,7 @@ const VerificationDocSchema = new Schema(
     url: { type: String, required: true },
     name: { type: String, trim: true },
   },
-  { _id: false },
+  { _id: false }
 );
 
 const UserSchema = new Schema(
@@ -90,7 +90,7 @@ const UserSchema = new Schema(
     resetPasswordToken: { type: String },
     resetPasswordTokenExpires: { type: Date },
 
-    // ---------------- Sirf PROVIDER ke liye ----------------
+    // ---------------- Provider-only fields ----------------
     serviceCategory: {
       type: String,
       trim: true,
@@ -127,13 +127,26 @@ const UserSchema = new Schema(
     // Availability
     availability: { type: AvailabilitySchema, default: undefined },
 
-    // Rating (reviews wale phase mein update hogi)
+    // Rating (updated by review system)
     rating: {
       average: { type: Number, default: 0 },
       count: { type: Number, default: 0 },
     },
+
+    // Provider no-show tracking and penalties
+    noShowCount: { type: Number, default: 0, min: 0 },
+    penaltyLevel: {
+      type: String,
+      enum: ["none", "warned", "rank_reduced", "suspended_pending"],
+      default: "none",
+    },
+    isSuspendedPendingReview: { type: Boolean, default: false },
+
+    // Provider balance (derived from completed bookings, tracked for payout)
+    pendingPayout: { type: Number, default: 0, min: 0 },
+    totalPaidOut: { type: Number, default: 0, min: 0 },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
 module.exports = mongoose.model("User", UserSchema);

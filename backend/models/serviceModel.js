@@ -8,6 +8,11 @@ const ServiceSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    masterServiceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MasterService",
+      index: true,
+    },
     categorySlug: { type: String, required: true, trim: true, index: true },
 
     title: { type: String, required: true, trim: true, maxlength: 100 },

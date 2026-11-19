@@ -6,7 +6,8 @@ const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
 const PaymentModel = require("../../models/paymentModel");
 const { PROVIDER_REGISTRATION_FEE, CURRENCY } = require("../../config/fees");
-const { createCheckoutSession, refundPayment, getStripe } = require("../../services/stripeService");
+const { createCheckoutSession, refundPayment, cancelPaymentIntent, getStripe } = require("../../services/stripeService");
+const { sendMail } = require("../../services/emailService");
 const { getPKTNow, toMinutes } = require("../../services/slotService");
 
 const SAFE_FIELDS =
@@ -576,44 +577,53 @@ const verifyRegistrationFee = async (req, res) => {
   }
 };
 
-// ================= PROVIDER BOOKINGS (Task 6) =================
+
+// ================= PROVIDER BOOKINGS =================
+const ServiceModel = require("../../models/serviceModel");
+
 const getProviderBookings = async (req, res) => {
   try {
     const provider = await findProvider(req, res);
     if (!provider) return;
 
-    const { scope = "all" } = req.query;
-
-    // Provider ko sirf paid (confirmed) bookings nazar aani chahiye.
-    const query = {
-      $and: [
-        { $or: [{ provider: provider._id }, { providerId: provider._id }] },
-        { status: { $nin: ["pending_payment", "expired"] } },
-      ],
-    };
-
+    const { scope = "upcoming" } = req.query;
     const pktNow = getPKTNow();
 
-    if (scope === "upcoming") {
-      query.$and.push({ status: "confirmed" });
-      query.$and.push({ date: { $gte: pktNow.date } });
+    const query = {
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      $and: [],
+    };
+
+    if (scope === "awaiting") {
+      query.$and.push({ status: "awaiting_provider" });
+    } else if (scope === "upcoming") {
+      query.$and.push({ status: { $in: ["confirmed", "on_the_way", "in_progress"] } });
+      query.$and.push({
+        $or: [
+          { date: { $gt: pktNow.date } },
+          { date: pktNow.date, slotStart: { $gte: pktNow.time } },
+        ],
+      });
     } else if (scope === "past") {
       query.$and.push({
         $or: [
-          { status: { $in: ["completed", "cancelled", "no-show", "no_show"] } },
+          { status: { $in: ["completed", "cancelled", "rejected", "expired", "provider_no_show", "customer_no_show", "no-show", "no_show"] } },
           { date: { $lt: pktNow.date } },
         ],
       });
+    } else if (scope === "all") {
+      query.$and.push({ status: { $nin: ["pending_payment", "expired"] } });
     }
 
+    if (query.$and.length === 0) delete query.$and;
+
     const bookings = await BookingModel.find(query)
-      .populate("customer customerId", "firstName lastName phone")
-      .sort({ date: -1, startTime: -1 })
+      .populate("customer customerId", "firstName lastName phone email")
+      .sort({ date: -1, slotStart: -1 })
       .lean();
 
-    // Privacy rule: Customer phone, address, and notes returned ONLY for confirmed or completed bookings
     const sanitized = bookings.map((b) => {
-      const isConfirmedOrCompleted = ["confirmed", "completed"].includes(b.status);
+      const isConfirmedOrBeyond = ["confirmed", "on_the_way", "in_progress", "completed"].includes(b.status);
       const cust = b.customer || b.customerId;
       const addr = b.address?.line ? b.address : { line: b.customerStreet || b.address?.street, area: b.address?.area, city: b.customerCity || b.address?.city };
 
@@ -621,15 +631,22 @@ const getProviderBookings = async (req, res) => {
         _id: b._id,
         bookingId: b.bookingId,
         status: b.status,
+        paymentStatus: b.paymentStatus,
         date: b.date,
         slotStart: b.slotStart || b.startTime,
         slotEnd: b.slotEnd || b.endTime,
+        items: b.items || [],
         category: b.category || b.categorySlug,
-        estimatedPrice: b.estimatedPrice || b.priceSnapshot,
+        total: b.total || b.estimatedPrice || b.priceSnapshot,
+        commissionAmount: b.commissionAmount,
+        providerAmount: b.providerAmount,
+        respondBy: b.respondBy,
+        onTheWayAt: b.onTheWayAt,
+        arrivedAt: b.arrivedAt,
         customerName: cust ? `${cust.firstName} ${cust.lastName}` : "Customer",
-        customerPhone: isConfirmedOrCompleted ? (b.phone || cust?.phone || b.customerPhone) : null,
-        address: isConfirmedOrCompleted ? addr : null,
-        notes: isConfirmedOrCompleted ? b.notes : null,
+        customerPhone: isConfirmedOrBeyond ? (b.phone || cust?.phone || b.customerPhone) : null,
+        address: isConfirmedOrBeyond ? addr : null,
+        notes: isConfirmedOrBeyond ? b.notes : null,
         createdAt: b.createdAt,
       };
     });
@@ -648,11 +665,9 @@ const updateProviderBookingStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!["completed", "no-show", "no_show"].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Status must be 'completed' or 'no-show'",
-      });
+    const allowedStatuses = ["completed", "customer_no_show", "no-show", "no_show"];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
     const booking = await BookingModel.findOne({
@@ -660,38 +675,23 @@ const updateProviderBookingStatus = async (req, res) => {
       $or: [{ provider: provider._id }, { providerId: provider._id }],
     });
 
-    if (!booking) {
-      return res.status(404).json({ success: false, message: "Booking not found" });
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+
+    if (!["confirmed", "on_the_way", "in_progress"].includes(booking.status)) {
+      return res.status(400).json({ success: false, message: "Booking is not in an updatable state" });
     }
 
-    if (booking.status !== "confirmed") {
-      return res.status(400).json({
-        success: false,
-        message: "Only confirmed bookings can be marked as completed or no-show",
-      });
-    }
-
-    // Must be after slot START time
     const pktNow = getPKTNow();
     const startTimeStr = booking.slotStart || booking.startTime;
-    if (
-      booking.date > pktNow.date ||
-      (booking.date === pktNow.date && toMinutes(startTimeStr) > toMinutes(pktNow.time))
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "You can only update status after the appointment start time",
-      });
+    if (booking.date > pktNow.date || (booking.date === pktNow.date && toMinutes(startTimeStr) > toMinutes(pktNow.time))) {
+      return res.status(400).json({ success: false, message: "You can only update status after the appointment start time" });
     }
 
-    booking.status = status === "no_show" ? "no-show" : status;
+    booking.status = (status === "no-show" || status === "no_show") ? "customer_no_show" : status;
+    if (booking.status === "completed") booking.completedAt = new Date();
     await booking.save();
 
-    return res.status(200).json({
-      success: true,
-      message: `Booking marked as ${booking.status}`,
-      booking,
-    });
+    return res.status(200).json({ success: true, message: `Booking marked as ${booking.status}`, booking });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -706,44 +706,31 @@ const cancelProviderBooking = async (req, res) => {
     const { reason } = req.body;
 
     if (!reason || String(reason).trim().length < 3) {
-      return res.status(400).json({
-        success: false,
-        message: "A cancellation reason of at least 3 characters is required",
-      });
+      return res.status(400).json({ success: false, message: "A cancellation reason of at least 3 characters is required" });
     }
 
-    const booking = await BookingModel.findOne({
-      _id: id,
-      $or: [{ provider: provider._id }, { providerId: provider._id }],
-    });
+    const booking = await BookingModel.findOne({ _id: id, $or: [{ provider: provider._id }, { providerId: provider._id }] });
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
 
-    if (!booking) {
-      return res.status(404).json({ success: false, message: "Booking not found" });
+    const cancellableStatuses = ["awaiting_provider", "confirmed"];
+    if (!cancellableStatuses.includes(booking.status)) {
+      return res.status(400).json({ success: false, message: "Only awaiting or confirmed bookings can be cancelled" });
     }
 
-    if (booking.status !== "confirmed") {
-      return res.status(400).json({
-        success: false,
-        message: "Only confirmed bookings can be cancelled",
-      });
-    }
+    const payment = await PaymentModel.findOne({ booking: booking._id });
 
-    // Refund Rs 100 booking fee via Stripe
-    const payment = await PaymentModel.findOne({
-      booking: booking._id,
-      type: "booking_fee",
-      status: "paid",
-    });
-
-    if (payment && payment.stripePaymentIntentId) {
+    if (booking.status === "awaiting_provider" && booking.stripePaymentIntentId) {
       try {
-        await refundPayment(payment.stripePaymentIntentId);
-        payment.status = "refunded";
-        payment.refundedAt = new Date();
-        await payment.save();
-      } catch (refundErr) {
-        console.error("Stripe refund error:", refundErr.message);
-      }
+        await cancelPaymentIntent(booking.stripePaymentIntentId);
+        if (payment) { payment.status = "released"; payment.releasedAt = new Date(); await payment.save(); }
+      } catch (stripeErr) { console.error("Stripe cancel error:", stripeErr.message); }
+      booking.paymentStatus = "released";
+    } else if (booking.status === "confirmed" && booking.stripePaymentIntentId) {
+      try {
+        await refundPayment(booking.stripePaymentIntentId);
+        if (payment) { payment.status = "refunded"; payment.refundedAt = new Date(); await payment.save(); }
+      } catch (refundErr) { console.error("Stripe refund error:", refundErr.message); }
+      booking.paymentStatus = "refunded";
     }
 
     booking.status = "cancelled";
@@ -751,27 +738,350 @@ const cancelProviderBooking = async (req, res) => {
     booking.cancelReason = reason.trim();
     await booking.save();
 
+    return res.status(200).json({ success: true, message: "Booking cancelled and customer notified", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const acceptBooking = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: "awaiting_provider",
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found or already responded" });
+    if (!booking.stripePaymentIntentId) return res.status(400).json({ success: false, message: "No payment intent found" });
+
+    const stripe = getStripe();
+    try {
+      await stripe.paymentIntents.capture(booking.stripePaymentIntentId);
+    } catch (stripeErr) {
+      console.error("Stripe capture error:", stripeErr.message);
+      return res.status(502).json({ success: false, message: "Payment capture failed: " + stripeErr.message });
+    }
+
+    booking.status = "confirmed";
+    booking.paymentStatus = "captured";
+    await booking.save();
+
+    await PaymentModel.findOneAndUpdate({ booking: booking._id }, { status: "captured", capturedAt: new Date() });
+    await UserModel.findByIdAndUpdate(provider._id, { $inc: { pendingPayout: booking.providerAmount || 0 } });
+
+    const customer = await UserModel.findById(booking.customer || booking.customerId).select("email firstName");
+    if (customer?.email) {
+      const serviceNames = (booking.items || []).map((i) => i.title).join(", ") || "services";
+      await sendMail({
+        to: customer.email,
+        subject: "Booking Confirmed - Provider Accepted",
+        text: `Hi ${customer.firstName || "there"},\n\n${provider.firstName} ${provider.lastName} has accepted your booking (${booking.bookingId}) for ${serviceNames}.\n\nDate: ${booking.date} at ${booking.slotStart}\nTotal Charged: Rs ${(booking.total || 0).toLocaleString()}\nProvider Phone: ${provider.phone || "see the app"}\n\nBest regards,\nThe FixPoint Team`,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Booking accepted and payment captured", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const rejectBooking = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const { reason } = req.body;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: "awaiting_provider",
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found or already responded" });
+
+    if (booking.stripePaymentIntentId) {
+      try { await cancelPaymentIntent(booking.stripePaymentIntentId); } catch (e) { console.error("Stripe cancel:", e.message); }
+    }
+
+    await PaymentModel.findOneAndUpdate({ booking: booking._id }, { status: "released", releasedAt: new Date() });
+
+    booking.status = "rejected";
+    booking.paymentStatus = "released";
+    booking.rejectedBy = "provider";
+    booking.rejectionReason = reason?.trim() || "Provider declined the request";
+    await booking.save();
+
+    const customer = await UserModel.findById(booking.customer || booking.customerId).select("email firstName");
+    if (customer?.email) {
+      await sendMail({
+        to: customer.email,
+        subject: "Booking Request Declined",
+        text: `Hi ${customer.firstName || "there"},\n\nThe provider could not accept your booking (${booking.bookingId}).\n\nReason: ${booking.rejectionReason}\n\nYour card hold has been released — you have not been charged. Please choose another provider.\n\nBest regards,\nThe FixPoint Team`,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Booking rejected and hold released", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markOnTheWay = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: "confirmed",
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "Confirmed booking not found" });
+
+    booking.status = "on_the_way";
+    booking.onTheWayAt = new Date();
+    await booking.save();
+
+    const customer = await UserModel.findById(booking.customer || booking.customerId).select("email firstName");
+    if (customer?.email) {
+      await sendMail({
+        to: customer.email,
+        subject: "Your provider is on the way!",
+        text: `Hi ${customer.firstName || "there"},\n\nYour provider ${provider.firstName} ${provider.lastName} is on the way for booking ${booking.bookingId} (${booking.slotStart}).\n\nBest regards,\nThe FixPoint Team`,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Status updated: On the way", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markArrived = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: "on_the_way",
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "On-the-way booking not found" });
+
+    booking.status = "in_progress";
+    booking.arrivedAt = new Date();
+    await booking.save();
+
+    return res.status(200).json({ success: true, message: "Status updated: Job in progress", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markCompleted = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: { $in: ["on_the_way", "in_progress", "confirmed"] },
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "Active booking not found" });
+
+    booking.status = "completed";
+    booking.completedAt = new Date();
+    await booking.save();
+
+    const customer = await UserModel.findById(booking.customer || booking.customerId).select("email firstName");
+    if (customer?.email) {
+      await sendMail({
+        to: customer.email,
+        subject: "Service Completed",
+        text: `Hi ${customer.firstName || "there"},\n\nYour booking (${booking.bookingId}) has been marked as completed by ${provider.firstName} ${provider.lastName}.\n\nTotal: Rs ${(booking.total || 0).toLocaleString()}\n\nPlease leave a review!\n\nBest regards,\nThe FixPoint Team`,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Booking marked as completed", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markCustomerNoShow = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { id } = req.params;
+    const booking = await BookingModel.findOne({
+      _id: id,
+      $or: [{ provider: provider._id }, { providerId: provider._id }],
+      status: { $in: ["confirmed", "on_the_way", "in_progress"] },
+    });
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+
+    const providerAmount = booking.providerAmount || 0;
+
+    if (booking.stripePaymentIntentId && providerAmount > 0) {
+      try {
+        const stripe = getStripe();
+        await stripe.refunds.create({ payment_intent: booking.stripePaymentIntentId, amount: Math.round(providerAmount * 100) });
+      } catch (stripeErr) { console.error("Stripe partial refund error:", stripeErr.message); }
+    }
+
+    await PaymentModel.findOneAndUpdate({ booking: booking._id }, { status: "refunded", refundedAt: new Date() });
+
+    booking.status = "customer_no_show";
+    booking.paymentStatus = "refunded";
+    await booking.save();
+
+    // Adjust provider's pending payout (they don't earn on customer no-show)
+    await UserModel.findByIdAndUpdate(provider._id, { $inc: { pendingPayout: -providerAmount } });
+
+    return res.status(200).json({ success: true, message: "Customer no-show recorded. Commission retained, rest refunded to customer.", booking });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getEarnings = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 20, 1), 50);
+    const skip = (pageNum - 1) * limitNum;
+
+    const providerFilter = { $or: [{ provider: provider._id }, { providerId: provider._id }] };
+
+    const [completedBookings, totalEarned, totalCount] = await Promise.all([
+      BookingModel.find({ ...providerFilter, status: "completed" }).sort({ updatedAt: -1 }).skip(skip).limit(limitNum).lean(),
+      BookingModel.aggregate([{ $match: { ...providerFilter, status: "completed" } }, { $group: { _id: null, sum: { $sum: "$providerAmount" } } }]),
+      BookingModel.countDocuments({ ...providerFilter, status: "completed" }),
+    ]);
+
     return res.status(200).json({
       success: true,
-      message: "Booking cancelled and customer refunded successfully",
-      booking,
+      summary: {
+        totalEarned: totalEarned[0]?.sum || 0,
+        pendingPayout: provider.pendingPayout || 0,
+        totalPaidOut: provider.totalPaidOut || 0,
+        completedJobs: totalCount,
+      },
+      bookings: completedBookings.map((b) => ({
+        _id: b._id,
+        bookingId: b.bookingId,
+        date: b.date,
+        slotStart: b.slotStart || b.startTime,
+        items: b.items || [],
+        total: b.total || b.estimatedPrice,
+        commissionAmount: b.commissionAmount,
+        providerAmount: b.providerAmount,
+        completedAt: b.completedAt || b.updatedAt,
+      })),
+      pagination: { total: totalCount, page: pageNum, pages: Math.ceil(totalCount / limitNum) || 1 },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// Provider Services CRUD
+const getMyServices = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+    const services = await ServiceModel.find({ provider: provider._id }).sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, services });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const createService = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+    const { title, description, price, durationMinutes, serviceType, masterServiceId } = req.body;
+    if (!title || !price || !durationMinutes) {
+      return res.status(400).json({ success: false, message: "title, price, and durationMinutes are required" });
+    }
+    const service = new ServiceModel({
+      provider: provider._id,
+      title: title.trim(),
+      description: description?.trim() || "",
+      price: Number(price),
+      durationMinutes: Number(durationMinutes),
+      serviceType: serviceType || "fixed",
+      categorySlug: provider.serviceCategory,
+      masterServiceId: masterServiceId || null,
+      isActive: true,
+    });
+    await service.save();
+    return res.status(201).json({ success: true, service });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateService = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+    const { id } = req.params;
+    const { title, description, price, durationMinutes, serviceType, isActive } = req.body;
+    const service = await ServiceModel.findOne({ _id: id, provider: provider._id });
+    if (!service) return res.status(404).json({ success: false, message: "Service not found" });
+    if (title !== undefined) service.title = title.trim();
+    if (description !== undefined) service.description = description.trim();
+    if (price !== undefined) service.price = Number(price);
+    if (durationMinutes !== undefined) service.durationMinutes = Number(durationMinutes);
+    if (serviceType !== undefined) service.serviceType = serviceType;
+    if (isActive !== undefined) service.isActive = Boolean(isActive);
+    await service.save();
+    return res.status(200).json({ success: true, service });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteService = async (req, res) => {
+  try {
+    const provider = await findApprovedProvider(req, res);
+    if (!provider) return;
+    const { id } = req.params;
+    const service = await ServiceModel.findOne({ _id: id, provider: provider._id });
+    if (!service) return res.status(404).json({ success: false, message: "Service not found" });
+    const activeBooking = await BookingModel.findOne({
+      "items.serviceId": service._id,
+      status: { $in: ["pending_payment", "awaiting_provider", "confirmed", "on_the_way", "in_progress"] },
+    });
+    if (activeBooking) return res.status(400).json({ success: false, message: "Cannot delete service with active bookings" });
+    await service.deleteOne();
+    return res.status(200).json({ success: true, message: "Service deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 const getMyPayments = async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
     const [payments, total] = await Promise.all([
-      PaymentModel.find({ user: req.user.userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit, 10))
-        .lean(),
+      PaymentModel.find({ user: req.user.userId }).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit, 10)).lean(),
       PaymentModel.countDocuments({ user: req.user.userId }),
     ]);
     return res.status(200).json({
@@ -799,4 +1109,15 @@ module.exports = {
   updateProviderBookingStatus,
   cancelProviderBooking,
   getMyPayments,
+  acceptBooking,
+  rejectBooking,
+  markOnTheWay,
+  markArrived,
+  markCompleted,
+  markCustomerNoShow,
+  getEarnings,
+  getMyServices,
+  createService,
+  updateService,
+  deleteService,
 };

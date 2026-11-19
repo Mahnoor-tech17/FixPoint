@@ -1,8 +1,12 @@
 const BookingModel = require("../models/bookingModel");
 const SettingModel = require("../models/settingModel");
+const {
+  DEFAULT_RESPONSE_WINDOW_MINUTES,
+  DEFAULT_GRACE_PERIOD_MINUTES,
+  SLOT_HOLD_MINUTES,
+} = require("../config/fees");
 
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 function getPKTNow() {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -12,6 +16,7 @@ function getPKTNow() {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   });
   const parts = formatter.formatToParts(new Date());
@@ -20,6 +25,7 @@ function getPKTNow() {
   return {
     date: `${map.year}-${map.month}-${map.day}`, // "YYYY-MM-DD"
     time: `${map.hour}:${map.minute}`, // "HH:mm"
+    datetime: new Date(`${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}:${map.second}+05:00`),
   };
 }
 
@@ -36,17 +42,44 @@ function toTimeString(minutes) {
 }
 
 /**
- * Generates available appointment slots for a provider on a specific date.
- * PoseFit-style slot model: checks discrete provider slots, filters held/confirmed bookings and past slots.
+ * Calculates respondBy deadline for provider response.
+ * Rule: min(now + responseWindow, slotStart - gracePeriod)
  */
-async function generateAvailableSlots({ provider, date, excludeBookingId = null }) {
-  if (!provider || !date) return [];
+function calculateRespondBy(dateStr, slotStartStr, responseWindowMinutes = 120, gracePeriodMinutes = 15) {
+  const now = new Date();
+  const slotDateObj = new Date(`${dateStr}T${slotStartStr}:00+05:00`);
 
-  // Check valid date format
+  const windowDeadline = new Date(now.getTime() + responseWindowMinutes * 60 * 1000);
+  const slotGraceDeadline = new Date(slotDateObj.getTime() - gracePeriodMinutes * 60 * 1000);
+
+  // Take the earlier of the two
+  return new Date(Math.min(windowDeadline.getTime(), slotGraceDeadline.getTime()));
+}
+
+/**
+ * Generates available appointment slots for a provider on a specific date.
+ * Handles single services or cart of services with total durationMinutes.
+ */
+async function generateAvailableSlots({
+  provider,
+  date,
+  durationMinutes = null,
+  service = null,
+  excludeBookingId = null,
+}) {
+  if (!provider || !date) return [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
 
   const pktNow = getPKTNow();
   if (date < pktNow.date) return [];
+
+  // Determine needed duration (min 15 mins, default 60)
+  let neededDuration = 60;
+  if (durationMinutes && Number(durationMinutes) >= 15) {
+    neededDuration = Number(durationMinutes);
+  } else if (service?.durationMinutes && Number(service.durationMinutes) >= 15) {
+    neededDuration = Number(service.durationMinutes);
+  }
 
   // Check booking horizon
   let horizonDays = 30;
@@ -79,34 +112,46 @@ async function generateAvailableSlots({ provider, date, excludeBookingId = null 
   );
   if (!schedule) return [];
 
-  // Candidate slots from provider schedule
-  let candidateSlots = [];
+  // Candidate intervals from provider schedule
+  const intervals = [];
   if (Array.isArray(schedule.slots) && schedule.slots.length > 0) {
-    candidateSlots = schedule.slots.map((s) => ({
-      startTime: s.start,
-      endTime: s.end,
-      startMin: toMinutes(s.start),
-      endMin: toMinutes(s.end),
-    }));
+    for (const s of schedule.slots) {
+      const sMin = toMinutes(s.start);
+      const eMin = toMinutes(s.end);
+      if (sMin !== null && eMin !== null && eMin > sMin) {
+        intervals.push({ startMin: sMin, endMin: eMin });
+      }
+    }
   } else if (schedule.startTime && schedule.endTime) {
-    // Legacy fallback (60-minute slices)
     const sMin = toMinutes(schedule.startTime);
     const eMin = toMinutes(schedule.endTime);
     if (sMin !== null && eMin !== null && eMin > sMin) {
-      for (let st = sMin; st + 60 <= eMin; st += 60) {
-        candidateSlots.push({
-          startTime: toTimeString(st),
-          endTime: toTimeString(st + 60),
-          startMin: st,
-          endMin: st + 60,
-        });
-      }
+      intervals.push({ startMin: sMin, endMin: eMin });
+    }
+  }
+
+  if (intervals.length === 0) return [];
+
+  // Slice intervals into candidate slots of duration `neededDuration`
+  const candidateSlots = [];
+  for (const interval of intervals) {
+    const intervalDuration = interval.endMin - interval.startMin;
+    if (intervalDuration < neededDuration) continue;
+
+    // Step by 30 mins or exact slot match
+    for (let st = interval.startMin; st + neededDuration <= interval.endMin; st += 30) {
+      candidateSlots.push({
+        startTime: toTimeString(st),
+        endTime: toTimeString(st + neededDuration),
+        startMin: st,
+        endMin: st + neededDuration,
+      });
     }
   }
 
   if (candidateSlots.length === 0) return [];
 
-  // Fetch active bookings (confirmed or active holds)
+  // Fetch active bookings (blocked statuses only)
   const now = new Date();
   const bookingFilter = {
     $and: [
@@ -114,8 +159,17 @@ async function generateAvailableSlots({ provider, date, excludeBookingId = null 
       { date },
       {
         $or: [
-          { status: "confirmed" },
-          { status: "pending" },
+          {
+            status: {
+              $in: [
+                "awaiting_provider",
+                "confirmed",
+                "on_the_way",
+                "in_progress",
+                "pending", // legacy
+              ],
+            },
+          },
           { status: "pending_payment", slotHoldExpiresAt: { $gt: now } },
         ],
       },
@@ -135,12 +189,17 @@ async function generateAvailableSlots({ provider, date, excludeBookingId = null 
   }));
 
   const currentMinutesNow = toMinutes(pktNow.time);
-  const hourlyRate = provider.hourlyRate || 0;
 
   const availableSlots = [];
+  const seenSlotKeys = new Set();
+
   for (const slot of candidateSlots) {
-    // Hide past slots for today
-    if (date === pktNow.date && slot.startMin <= currentMinutesNow) {
+    const slotKey = `${slot.startTime}-${slot.endTime}`;
+    if (seenSlotKeys.has(slotKey)) continue;
+    seenSlotKeys.add(slotKey);
+
+    // Hide past slots for today (including 15-min grace lead time)
+    if (date === pktNow.date && slot.startMin <= currentMinutesNow + 15) {
       continue;
     }
 
@@ -150,15 +209,10 @@ async function generateAvailableSlots({ provider, date, excludeBookingId = null 
     );
     if (isBooked) continue;
 
-    const durationMinutes = Math.max(slot.endMin - slot.startMin, 30);
-    const durationHours = durationMinutes / 60;
-    const estimatedPrice = Math.round(hourlyRate * durationHours);
-
     availableSlots.push({
       startTime: slot.startTime,
       endTime: slot.endTime,
-      durationMinutes,
-      estimatedPrice,
+      durationMinutes: neededDuration,
     });
   }
 
@@ -166,7 +220,7 @@ async function generateAvailableSlots({ provider, date, excludeBookingId = null 
 }
 
 /**
- * Lightweight periodic cleanup expiring stale pending_payment holds.
+ * Periodic cleanup expiring stale pending_payment holds.
  */
 function startHoldCleanup() {
   setInterval(async () => {
@@ -191,6 +245,7 @@ module.exports = {
   getPKTNow,
   toMinutes,
   toTimeString,
+  calculateRespondBy,
   generateAvailableSlots,
   startHoldCleanup,
 };

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -57,24 +57,25 @@ export default function CustomerBookings() {
   const [noShowBooking, setNoShowBooking] = useState(null);
   const [noShowSubmitting, setNoShowSubmitting] = useState(false);
   const [now] = useState(() => Date.now());
+  const [customerNoShowWaitMinutes, setCustomerNoShowWaitMinutes] = useState(60);
 
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/customer/bookings?scope=${scope}`);
       if (res.data?.success) {
         setBookings(res.data.bookings || []);
+        setCustomerNoShowWaitMinutes(res.data.customerNoShowWaitMinutes ?? 60);
       }
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to load bookings"));
     } finally {
       setLoading(false);
     }
-  };
+  }, [scope]);
 
   useEffect(() => {
-    fetchBookings();
-  }, [scope]);
+    void Promise.resolve().then(fetchBookings);
+  }, [fetchBookings]);
 
   const handleConfirmCancel = async () => {
     if (!cancelModalBooking) return;
@@ -117,10 +118,10 @@ export default function CustomerBookings() {
     if (!booking.date || !booking.slotStart) return false;
     // PKT is UTC+5; slot time must be > 60 min ago
     const [h, m] = booking.slotStart.split(":").map(Number);
-    const slotDate = new Date(booking.date + "T00:00:00+05:00");
-    slotDate.setHours(h, m, 0, 0);
-    const diff = (now - slotDate.getTime()) / 60000;
-    return diff >= 60;
+    const [year, month, day] = booking.date.split("-").map(Number);
+    const slotStartUtc = Date.UTC(year, month - 1, day, h - 5, m);
+    const diff = (now - slotStartUtc) / 60000;
+    return diff >= customerNoShowWaitMinutes;
   };
 
   const TABS = [

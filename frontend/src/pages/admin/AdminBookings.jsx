@@ -1,16 +1,9 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   Calendar,
-  Clock,
   Search,
-  Filter,
-  XCircle,
-  AlertCircle,
-  User,
-  Shield,
-  Download,
-} from "lucide-react";
+  } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
 import StatusBadge from "../../components/common/StatusBadge";
 import Spinner from "../../components/common/Spinner";
@@ -32,8 +25,7 @@ export default function AdminBookings() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelLoading, setCancelLoading] = useState(false);
 
-  const fetchBookings = () => {
-    setLoading(true);
+  const fetchBookings = useCallback(() => {
     let query = `/bookings?page=${page}&limit=10`;
     if (statusFilter) query += `&status=${statusFilter}`;
     if (search.trim()) query += `&search=${encodeURIComponent(search.trim())}`;
@@ -50,11 +42,11 @@ export default function AdminBookings() {
         toast.error(getErrorMessage(err, "Failed to load bookings"));
       })
       .finally(() => setLoading(false));
-  };
+  }, [page, statusFilter, search]);
 
   useEffect(() => {
-    fetchBookings();
-  }, [statusFilter, page]);
+    void Promise.resolve().then(fetchBookings);
+  }, [fetchBookings]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -161,18 +153,18 @@ export default function AdminBookings() {
                   return (
                     <tr key={b._id} className="hover:bg-gray-50/60 transition">
                       <td className="py-4 font-bold text-ink">{b.bookingId}</td>
-                      <td className="py-4 font-semibold text-ink">{b.serviceTitle}</td>
+                      <td className="py-4 font-semibold text-ink">{b.items?.map((item) => item.title).join(", ")}</td>
                       <td className="py-4 text-gray-700">
-                        {b.customerId?.firstName} {b.customerId?.lastName}
+                        {b.customer?.firstName} {b.customer?.lastName}
                       </td>
                       <td className="py-4 text-gray-700">
-                        {b.providerId?.firstName} {b.providerId?.lastName}
+                        {b.provider?.firstName} {b.provider?.lastName}
                       </td>
                       <td className="py-4 text-gray-500">
-                        {b.date} • {b.startTime}
+                        {b.date} • {b.slotStart}
                       </td>
                       <td className="py-4 font-bold text-ink">
-                        PKR {b.priceSnapshot}
+                        PKR {b.total}
                       </td>
                       <td className="py-4">
                         <StatusBadge status={b.status} />

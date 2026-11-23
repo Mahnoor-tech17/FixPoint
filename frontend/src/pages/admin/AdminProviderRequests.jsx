@@ -1,20 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertCircle,
-  Briefcase,
   Check,
   CheckCircle2,
   Clock,
   ExternalLink,
-  FileCheck,
   FileText,
   Loader2,
   Mail,
   MapPin,
   Phone,
-  ShieldAlert,
-  User,
   XCircle,
 } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
@@ -35,9 +30,8 @@ export default function AdminProviderRequests() {
   const [rejectReasonError, setRejectReasonError] = useState("");
   const [rejecting, setRejecting] = useState(false);
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/admin/provider-requests");
       setRequests(res.data.requests || []);
     } catch (err) {
@@ -45,11 +39,11 @@ export default function AdminProviderRequests() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchRequests();
-  }, []);
+    void Promise.resolve().then(fetchRequests);
+  }, [fetchRequests]);
 
   const handleApproveConfirm = async () => {
     if (!approvingProvider) return;

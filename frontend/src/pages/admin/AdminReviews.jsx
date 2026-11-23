@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Star, MessageSquare, Trash2, User } from "lucide-react";
+import { MessageSquare, Trash2 } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
 import StarRating from "../../components/common/StarRating";
 import Spinner from "../../components/common/Spinner";
@@ -55,8 +55,7 @@ export default function AdminReviews() {
   const [deletingId, setDeletingId] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const fetchReviews = () => {
-    setLoading(true);
+  const fetchReviews = useCallback(() => {
     httpClient
       .get(`/reviews?page=${page}&limit=10`)
       .then((res) => {
@@ -69,11 +68,11 @@ export default function AdminReviews() {
         toast.error(getErrorMessage(err, "Failed to load reviews"));
       })
       .finally(() => setLoading(false));
-  };
+  }, [page]);
 
   useEffect(() => {
-    fetchReviews();
-  }, [page]);
+    void Promise.resolve().then(fetchReviews);
+  }, [fetchReviews]);
 
   const handleDelete = async () => {
     setDeleteLoading(true);

@@ -1,21 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertCircle,
   Calendar,
-  Check,
   Clock,
   Loader2,
   Plus,
   Save,
-  ShieldAlert,
-  Trash2,
   X,
 } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
 import { getErrorMessage, httpClient } from "../../lib/http";
-import { useProviderStatus } from "../../components/provider/useProviderStatus";
 
 const DAYS = [
   { key: "mon", label: "Monday" },
@@ -46,7 +40,6 @@ const formatDuration = (start, end) => {
 };
 
 export default function ProviderAvailability() {
-  const { providerStatus, loading: statusLoading } = useProviderStatus();
 
   // 7 days schedule: { day: 'mon', isAvailable: boolean, slots: [{ start, end }] }
   const [weekly, setWeekly] = useState(
@@ -76,7 +69,6 @@ export default function ProviderAvailability() {
 
   const fetchAvailability = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/availability");
       const av = res.data.availability;
       if (av) {
@@ -118,7 +110,7 @@ export default function ProviderAvailability() {
   };
 
   useEffect(() => {
-    fetchAvailability();
+    void Promise.resolve().then(fetchAvailability);
   }, []);
 
   const handleToggleDay = (dayKey) => {

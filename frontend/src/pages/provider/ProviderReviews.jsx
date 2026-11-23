@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Star, MessageSquare } from "lucide-react";
+import { useState, useEffect } from "react";
+import { MessageSquare } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
 import StarRating from "../../components/common/StarRating";
 import Spinner from "../../components/common/Spinner";
@@ -18,7 +18,6 @@ export default function ProviderReviews() {
 
   useEffect(() => {
     if (!user?._id) return;
-    setLoading(true);
     httpClient
       .get(`/public/providers/${user._id}/reviews?page=${page}&limit=10`)
       .then((res) => {

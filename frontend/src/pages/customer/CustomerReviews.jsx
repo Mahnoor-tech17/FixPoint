@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Star, MessageSquare, Edit3, Trash2 } from "lucide-react";
@@ -72,8 +72,7 @@ export default function CustomerReviews() {
   const [deletingId, setDeletingId] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const fetchReviews = () => {
-    setLoading(true);
+  const fetchReviews = useCallback(() => {
     httpClient
       .get(`/reviews/my?page=${page}&limit=10`)
       .then((res) => {
@@ -86,7 +85,7 @@ export default function CustomerReviews() {
         toast.error(getErrorMessage(err, "Failed to load reviews"));
       })
       .finally(() => setLoading(false));
-  };
+  }, [page]);
 
   const fetchPending = async () => {
     try {
@@ -107,15 +106,14 @@ export default function CustomerReviews() {
   };
 
   useEffect(() => {
-    fetchReviews();
-  }, [page]);
+    void Promise.resolve().then(fetchReviews);
+  }, [fetchReviews]);
 
   useEffect(() => {
-    fetchPending();
+    void Promise.resolve().then(fetchPending);
   }, []);
 
   const fetchAppReview = () => {
-    setAppLoading(true);
     httpClient
       .get("/app-reviews/my")
       .then((res) => {
@@ -130,7 +128,7 @@ export default function CustomerReviews() {
   };
 
   useEffect(() => {
-    fetchAppReview();
+    void Promise.resolve().then(fetchAppReview);
   }, []);
 
   const handleSaveAppReview = async () => {
@@ -360,8 +358,8 @@ export default function CustomerReviews() {
               >
                 <div className="space-y-0.5">
                   <p className="text-sm font-bold text-ink">
-                    {b.provider?.firstName || b.providerId?.firstName}{" "}
-                    {b.provider?.lastName || b.providerId?.lastName}
+                    {b.provider?.firstName}{" "}
+                    {b.provider?.lastName}
                   </p>
                   <p className="text-xs text-gray-500">
                     #{b.bookingId} · {b.date} · {b.slotStart} – {b.slotEnd}

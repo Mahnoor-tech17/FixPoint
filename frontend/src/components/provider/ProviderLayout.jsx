@@ -8,6 +8,7 @@ import {
   Users,
   Star,
   Wallet,
+  Wrench,
 } from "lucide-react";
 import DashboardLayout from "../common/DashboardLayout";
 
@@ -17,6 +18,7 @@ const navItems = [
   { to: "/provider/earnings", label: "Earnings", icon: Wallet },
   { to: "/provider/calendar", label: "Calendar", icon: Calendar },
   { to: "/provider/availability", label: "Availability", icon: Calendar },
+  { to: "/provider/services", label: "Services", icon: Wrench },
   { to: "/provider/customers", label: "Clients", icon: Users },
   { to: "/provider/reviews", label: "Reviews", icon: Star },
   { to: "/provider/payments", label: "Payments", icon: CreditCard },

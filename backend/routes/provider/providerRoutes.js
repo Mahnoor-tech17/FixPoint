@@ -26,6 +26,7 @@ const {
   markCustomerNoShow,
   getEarnings,
   getMyServices,
+  getAvailableMasterServices,
   createService,
   updateService,
   deleteService,
@@ -68,6 +69,7 @@ router.get("/earnings", getEarnings);
 
 // Services (Provider services catalog)
 router.get("/services", getMyServices);
+router.get("/master-services", getAvailableMasterServices);
 router.post("/services", createService);
 router.put("/services/:id", updateService);
 router.delete("/services/:id", deleteService);

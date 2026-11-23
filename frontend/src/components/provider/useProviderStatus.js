@@ -9,7 +9,6 @@ export function useProviderStatus() {
 
   const fetchStatus = async () => {
     try {
-      setLoading(true);
       const [dashRes, profRes] = await Promise.all([
         httpClient.get("/provider/dashboard"),
         httpClient.get("/provider/profile"),
@@ -25,7 +24,7 @@ export function useProviderStatus() {
   };
 
   useEffect(() => {
-    fetchStatus();
+    void Promise.resolve().then(fetchStatus);
   }, []);
 
   const providerStatus = dashboard?.providerStatus || profile?.providerStatus || "invited";

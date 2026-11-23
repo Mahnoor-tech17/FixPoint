@@ -3,13 +3,9 @@ import { toast } from "sonner";
 import { z } from "zod";
 import {
   Camera,
-  CheckCircle2,
-  Key,
   Loader2,
   Lock,
   Plus,
-  Save,
-  ShieldCheck,
   User,
   X,
 } from "lucide-react";
@@ -81,7 +77,6 @@ export default function ProviderSettings() {
 
   const fetchProfile = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/profile");
       const p = res.data.provider;
       setProvider(p);
@@ -105,7 +100,7 @@ export default function ProviderSettings() {
   };
 
   useEffect(() => {
-    fetchProfile();
+    void Promise.resolve().then(fetchProfile);
   }, []);
 
   const handlePhotoUpload = async (e) => {

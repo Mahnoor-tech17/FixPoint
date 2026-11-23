@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   CreditCard,
+  Wrench,
 } from "lucide-react";
 import DashboardLayout from "../common/DashboardLayout";
 
@@ -19,6 +20,7 @@ const navItems = [
   { to: "/admin/providers", label: "Providers", icon: Briefcase },
   { to: "/admin/provider-requests", label: "Provider requests", icon: UserCheck },
   { to: "/admin/categories", label: "Categories", icon: Layers },
+  { to: "/admin/services", label: "Master services", icon: Wrench },
   { to: "/admin/users", label: "Users", icon: Users },
   { to: "/admin/reviews", label: "Reviews", icon: Star },
   { to: "/admin/reports", label: "Reports", icon: BarChart3 },

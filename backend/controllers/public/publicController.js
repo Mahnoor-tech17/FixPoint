@@ -3,6 +3,7 @@ const CategoryModel = require("../../models/categoryModel");
 const UserModel = require("../../models/userModel");
 const ReviewModel = require("../../models/reviewModel");
 const ServiceModel = require("../../models/serviceModel");
+const MasterServiceModel = require("../../models/masterServiceModel");
 const { generateAvailableSlots, getPKTNow } = require("../../services/slotService");
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,11 +30,24 @@ const getPublicCategories = async (req, res) => {
   }
 };
 
+const getActiveMasterServices = async (req, res) => {
+  try {
+    const services = await MasterServiceModel.find({ isActive: true }).sort({ categorySlug: 1, title: 1 }).lean();
+    const grouped = services.reduce((groups, service) => {
+      (groups[service.categorySlug] ||= []).push(service);
+      return groups;
+    }, {});
+    return res.status(200).json({ success: true, groups: grouped });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // ---------------- SEARCH PROVIDERS ----------------
 const searchProviders = async (req, res) => {
   try {
     const {
-      q, category, city, minPrice, maxPrice, minRating,
+      q, category, city, area, minPrice, maxPrice, minRating, availability,
       sort = "rating", page = 1, limit = 9, serviceIds,
     } = req.query;
 
@@ -51,10 +65,7 @@ const searchProviders = async (req, res) => {
       filter.$or = [{ city: cityRegex }, { serviceAreas: cityRegex }];
     }
 
-    const minP = minPrice ? parseFloat(minPrice) : null;
-    const maxP = maxPrice ? parseFloat(maxPrice) : null;
-    if (minP !== null && !isNaN(minP)) filter.hourlyRate = { ...filter.hourlyRate, $gte: minP };
-    if (maxP !== null && !isNaN(maxP)) filter.hourlyRate = { ...filter.hourlyRate, $lte: maxP };
+    const requestedMasterIds = serviceIds ? String(serviceIds).split(",").filter(mongoose.isValidObjectId) : [];
 
     if (minRating) {
       const ratingVal = parseFloat(minRating);
@@ -74,34 +85,38 @@ const searchProviders = async (req, res) => {
     }
 
     // If serviceIds provided, filter to providers who offer ALL those services
-    if (serviceIds) {
-      const idList = String(serviceIds).split(",").map((s) => s.trim()).filter(Boolean);
-      if (idList.length > 0) {
-        const validIds = idList.filter((s) => mongoose.isValidObjectId(s)).map((s) => new mongoose.Types.ObjectId(s));
-        if (validIds.length > 0) {
-          const matchingProviderSets = await Promise.all(
-            validIds.map((sid) =>
-              ServiceModel.distinct("provider", {
-                $or: [{ _id: sid }, { masterServiceId: sid }],
-                isActive: true,
-              })
-            )
-          );
-          const providerIdStrings = matchingProviderSets.map((set) => set.map((id) => id.toString()));
-          const intersection = providerIdStrings.reduce((acc, cur) => acc.filter((id) => cur.includes(id)));
-          filter._id = { $in: intersection.map((id) => new mongoose.Types.ObjectId(id)) };
-        }
-      }
+    if (requestedMasterIds.length) {
+      const matchingProviderSets = await Promise.all(requestedMasterIds.map((masterId) =>
+        ServiceModel.distinct("providerId", { masterServiceId: masterId, isActive: true })
+      ));
+      const intersection = matchingProviderSets.map((set) => set.map(String)).reduce((acc, ids) => acc.filter((id) => ids.includes(id)));
+      filter._id = { $in: intersection };
     }
 
+    const areaValue = area || city;
+    if (areaValue && !city) filter.serviceAreas = new RegExp(escapeRegex(areaValue.trim()), "i");
+
     const candidateProviders = await UserModel.find(filter)
-      .select("firstName lastName profilePhoto serviceCategory city serviceAreas experienceYears bio rating hourlyRate availability createdAt")
+      .select("firstName lastName profilePhoto serviceCategory city serviceAreas experienceYears bio rating availability createdAt")
       .lean();
+
+    const serviceMap = new Map();
+    if (requestedMasterIds.length) {
+      const providerIds = candidateProviders.map((provider) => provider._id);
+      const providerServices = await ServiceModel.find({ providerId: { $in: providerIds }, masterServiceId: { $in: requestedMasterIds }, isActive: true }).lean();
+      for (const service of providerServices) {
+        const key = String(service.providerId);
+        serviceMap.set(key, [...(serviceMap.get(key) || []), service]);
+      }
+    }
 
     const validProviders = candidateProviders.map((p) => {
       const hasSlots = Boolean(
         p.availability?.weekly?.some((w) => (w.isAvailable || w.isWorking) && (w.slots?.length > 0 || w.startTime))
       );
+      const cartServices = serviceMap.get(String(p._id)) || [];
+      const cartPrice = cartServices.reduce((total, service) => total + service.price, 0);
+      const completeCart = !requestedMasterIds.length || new Set(cartServices.map((service) => String(service.masterServiceId))).size === new Set(requestedMasterIds).size;
       return {
         _id: p._id,
         firstName: p.firstName,
@@ -113,21 +128,49 @@ const searchProviders = async (req, res) => {
         experienceYears: p.experienceYears ?? 0,
         bio: p.bio || "",
         rating: p.rating || { average: 5, count: 0 },
-        hourlyRate: p.hourlyRate,
+        cartPrice,
+        serviceIds: cartServices.map((service) => service._id),
+        services: cartServices.map(({ _id, masterServiceId, title, price, durationMinutes }) => ({ _id, masterServiceId, title, price, durationMinutes })),
         hasSlots,
+        availability: hasSlots ? "later" : "unavailable",
+        availabilityData: p.availability,
         createdAt: p.createdAt,
+        completeCart,
       };
-    });
+    }).filter((provider) => provider.completeCart);
 
-    if (sort === "rating") validProviders.sort((a, b) => (b.rating.average || 0) - (a.rating.average || 0));
-    else if (sort === "price_asc") validProviders.sort((a, b) => (a.hourlyRate || 0) - (b.hourlyRate || 0));
-    else if (sort === "price_desc") validProviders.sort((a, b) => (b.hourlyRate || 0) - (a.hourlyRate || 0));
-    else if (sort === "newest") validProviders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    else if (sort === "experience") validProviders.sort((a, b) => (b.experienceYears || 0) - (a.experienceYears || 0));
-    else validProviders.sort((a, b) => (b.rating.average || 5) - (a.rating.average || 5));
+    const minP = minPrice === undefined || minPrice === "" ? null : Number(minPrice);
+    const maxP = maxPrice === undefined || maxPrice === "" ? null : Number(maxPrice);
+    let pricedProviders = validProviders.filter((provider) =>
+      (!requestedMasterIds.length || Number.isFinite(provider.cartPrice)) &&
+      (minP === null || Number.isNaN(minP) || provider.cartPrice >= minP) &&
+      (maxP === null || Number.isNaN(maxP) || provider.cartPrice <= maxP)
+    );
 
-    const total = validProviders.length;
-    const paginated = validProviders.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    if (sort === "rating") pricedProviders.sort((a, b) => (b.rating.average || 0) - (a.rating.average || 0));
+    else if (sort === "price_asc") pricedProviders.sort((a, b) => a.cartPrice - b.cartPrice);
+    else if (sort === "price_desc") pricedProviders.sort((a, b) => b.cartPrice - a.cartPrice);
+    else if (sort === "newest") pricedProviders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    else if (sort === "experience") pricedProviders.sort((a, b) => (b.experienceYears || 0) - (a.experienceYears || 0));
+    else pricedProviders.sort((a, b) => (b.rating.average || 5) - (a.rating.average || 5));
+
+    const pktToday = getPKTNow().date;
+    const today = new Date(`${pktToday}T12:00:00+05:00`);
+    const tomorrow = new Date(today.getTime() + 86400000);
+    const dayCodes = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    for (const provider of pricedProviders) {
+      const weekly = provider.availabilityData?.weekly || [];
+      const worksToday = weekly.some((w) => w.day === dayCodes[today.getUTCDay()] && (w.isAvailable || w.isWorking));
+      const worksTomorrow = weekly.some((w) => w.day === dayCodes[tomorrow.getUTCDay()] && (w.isAvailable || w.isWorking));
+      provider.availability = worksToday ? "today" : worksTomorrow ? "tomorrow" : "later";
+      delete provider.availabilityData;
+    }
+    if (availability === "today" || availability === "tomorrow") {
+      pricedProviders = pricedProviders.filter((p) => p.availability === availability);
+    }
+
+    const total = pricedProviders.length;
+    const paginated = pricedProviders.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
     return res.status(200).json({ success: true, total, page: pageNum, pages: Math.ceil(total / limitNum) || 1, providers: paginated });
   } catch (error) {
@@ -148,13 +191,14 @@ const getProviderPublicProfile = async (req, res) => {
       UserModel.findOne({ _id: id, ...VISIBLE_PROVIDER_FILTER })
         .select("firstName lastName profilePhoto serviceCategory bio experienceYears city serviceAreas rating hourlyRate availability")
         .lean(),
-      ServiceModel.find({ provider: id, isActive: true }).lean(),
+      ServiceModel.find({ providerId: id, isActive: true }).populate({ path: "masterServiceId", match: { isActive: true } }).lean(),
     ]);
 
     if (!provider) {
       return res.status(404).json({ success: false, message: "Provider not found or unavailable" });
     }
 
+    const activeServices = services.filter((service) => service.masterServiceId);
     const workingDays = (provider.availability?.weekly || [])
       .filter((w) => (w.isAvailable || w.isWorking) && (w.slots?.length > 0 || w.startTime))
       .map((w) => w.day.toUpperCase());
@@ -175,7 +219,7 @@ const getProviderPublicProfile = async (req, res) => {
         hourlyRate: provider.hourlyRate,
         workingDays,
         daysOff: provider.availability?.daysOff || [],
-        services,
+        services: activeServices,
       },
     });
   } catch (error) {
@@ -208,7 +252,7 @@ const getProviderSlots = async (req, res) => {
       const idList = String(serviceIds).split(",").map((s) => s.trim()).filter(Boolean);
       const validIds = idList.filter((s) => mongoose.isValidObjectId(s)).map((s) => new mongoose.Types.ObjectId(s));
       if (validIds.length > 0) {
-        const svcs = await ServiceModel.find({ _id: { $in: validIds }, provider: provider._id }).lean();
+        const svcs = await ServiceModel.find({ _id: { $in: validIds }, providerId: provider._id }).lean();
         if (svcs.length > 0) {
           totalDuration = svcs.reduce((sum, s) => sum + (s.durationMinutes || 60), 0);
         }
@@ -283,6 +327,7 @@ const getLatestReviews = async (req, res) => {
 
 module.exports = {
   getPublicCategories,
+  getActiveMasterServices,
   searchProviders,
   getProviderPublicProfile,
   getProviderSlots,

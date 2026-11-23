@@ -155,7 +155,7 @@ async function generateAvailableSlots({
   const now = new Date();
   const bookingFilter = {
     $and: [
-      { $or: [{ provider: provider._id }, { providerId: provider._id }] },
+      { provider: provider._id },
       { date },
       {
         $or: [
@@ -180,12 +180,12 @@ async function generateAvailableSlots({
   }
 
   const activeBookings = await BookingModel.find(bookingFilter)
-    .select("slotStart slotEnd startTime endTime")
+    .select("slotStart slotEnd")
     .lean();
 
   const bookedIntervals = activeBookings.map((b) => ({
-    startMin: toMinutes(b.slotStart || b.startTime),
-    endMin: toMinutes(b.slotEnd || b.endTime),
+    startMin: toMinutes(b.slotStart),
+    endMin: toMinutes(b.slotEnd),
   }));
 
   const currentMinutesNow = toMinutes(pktNow.time);

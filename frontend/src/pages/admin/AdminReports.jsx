@@ -1,14 +1,8 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
-  BarChart3,
-  TrendingUp,
   Download,
-  Calendar,
-  DollarSign,
-  Award,
-  PieChart,
-} from "lucide-react";
+  } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
 import Spinner from "../../components/common/Spinner";
 import StarRating from "../../components/common/StarRating";
@@ -20,7 +14,6 @@ export default function AdminReports() {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get("/admin/reports")
       .then((res) => {

@@ -545,7 +545,7 @@ const getReports = async (req, res) => {
             $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
           },
           revenue: {
-            $sum: { $cond: [{ $eq: ["$status", "completed"] }, { $ifNull: ["$price", "$priceSnapshot"] }, 0] },
+            $sum: { $cond: [{ $eq: ["$status", "completed"] }, "$total", 0] },
           },
         },
       },
@@ -564,7 +564,7 @@ const getReports = async (req, res) => {
           _id: "$categorySlug",
           count: { $sum: 1 },
           revenue: {
-            $sum: { $cond: [{ $eq: ["$status", "completed"] }, { $ifNull: ["$price", "$priceSnapshot"] }, 0] },
+            $sum: { $cond: [{ $eq: ["$status", "completed"] }, "$total", 0] },
           },
         },
       },
@@ -595,8 +595,8 @@ const getReports = async (req, res) => {
 const exportBookingsCsv = async (req, res) => {
   try {
     const bookings = await BookingModel.find()
-      .populate("customerId", "firstName lastName email")
-      .populate("providerId", "firstName lastName")
+      .populate("customer", "firstName lastName email")
+      .populate("provider", "firstName lastName")
       .sort({ createdAt: -1 })
       .lean();
  
@@ -620,14 +620,14 @@ const exportBookingsCsv = async (req, res) => {
       return [
         escape(b.bookingId),
         escape(b.date),
-        escape(b.startTime),
-        escape(b.endTime),
-        escape(b.serviceTitle),
+        escape(b.slotStart),
+        escape(b.slotEnd),
+        escape(b.items?.map((item) => item.title).join(", ") || ""),
         escape(b.categorySlug),
-        escape(`${b.customerId?.firstName || ""} ${b.customerId?.lastName || ""}`.trim()),
-        escape(b.customerId?.email || ""),
-        escape(`${b.providerId?.firstName || ""} ${b.providerId?.lastName || ""}`.trim()),
-        escape(b.price || b.priceSnapshot || 0),
+        escape(`${b.customer?.firstName || ""} ${b.customer?.lastName || ""}`.trim()),
+        escape(b.customer?.email || ""),
+        escape(`${b.provider?.firstName || ""} ${b.provider?.lastName || ""}`.trim()),
+        escape(b.total || 0),
         escape(b.status),
         escape(b.createdAt?.toISOString() || ""),
       ].join(",");
@@ -774,7 +774,7 @@ const createMasterService = async (req, res) => {
       title: title.trim(), categorySlug, description: description?.trim(),
       defaultDurationMinutes: Number(defaultDurationMinutes) || 60,
       suggestedPrice: Number(suggestedPrice) || 0,
-      serviceType: serviceType || "fixed",
+      serviceType: serviceType || "repair",
       isActive: true,
     });
     await service.save();
@@ -799,7 +799,15 @@ const updateMasterService = async (req, res) => {
 const deleteMasterService = async (req, res) => {
   try {
     const { id } = req.params;
-    await MasterServiceModel.findByIdAndDelete(id);
+    const service = await MasterServiceModel.findById(id);
+    if (!service) return res.status(404).json({ success: false, message: "Master service not found" });
+    const providerUse = await ServiceModel.exists({ masterServiceId: id });
+    if (providerUse) {
+      service.isActive = false;
+      await service.save();
+      return res.status(409).json({ success: false, deactivated: true, message: "Providers already use this service. It has been deactivated instead of deleted." });
+    }
+    await service.deleteOne();
     return res.status(200).json({ success: true, message: "Master service deleted" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

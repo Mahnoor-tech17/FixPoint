@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from "react";
-import { useSearchParams, Link, useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useSearchParams, Link, useLocation } from "react-router-dom";
 import {
   Search,
   Filter,
-  Star,
   MapPin,
   Clock,
   ArrowRight,
-  Sparkles,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -22,18 +20,19 @@ import CustomerLayout from "../../components/customer/CustomerLayout";
 
 export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutProp = false }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const location = useLocation();
   // /customer/search par hamesha customer layout (sidebar) dikhao
   const insideCustomerLayout =
     insideCustomerLayoutProp || location.pathname.startsWith("/customer");
 
   const [categories, setCategories] = useState([]);
+  const [masterServices, setMasterServices] = useState([]);
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const selectedMasterIds = (searchParams.get("serviceIds") || "").split(",").filter(Boolean);
 
   // Filters from URL
   const query = searchParams.get("q") || "";
@@ -41,6 +40,8 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
   const city = searchParams.get("city") || "";
   const minRating = searchParams.get("minRating") || "";
   const sort = searchParams.get("sort") || "rating";
+  const maxPrice = searchParams.get("maxPrice") || "";
+  const availability = searchParams.get("availability") || "";
   const page = parseInt(searchParams.get("page") || "1", 10);
 
   // Local filter form state
@@ -49,20 +50,21 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
   const [selectedCity, setSelectedCity] = useState(city);
   const [selectedMinRating, setSelectedMinRating] = useState(minRating);
   const [selectedSort, setSelectedSort] = useState(sort);
+  const [selectedMaxPrice, setSelectedMaxPrice] = useState(maxPrice);
+  const [selectedAvailability, setSelectedAvailability] = useState(availability);
 
   // Load categories
   useEffect(() => {
-    httpClient
-      .get("/public/categories")
-      .then((res) => {
-        if (res.data?.success) setCategories(res.data.categories || []);
+    Promise.all([httpClient.get("/public/categories"), httpClient.get("/public/master-services")])
+      .then(([categoryResponse, serviceResponse]) => {
+        if (categoryResponse.data?.success) setCategories(categoryResponse.data.categories || []);
+        if (serviceResponse.data?.success) setMasterServices(Object.entries(serviceResponse.data.groups || {}));
       })
-      .catch((err) => console.error("Error fetching categories:", err));
+      .catch(() => {});
   }, []);
 
   // Fetch search results when URL params change
   useEffect(() => {
-    setLoading(true);
     const params = new URLSearchParams(searchParams);
     httpClient
       .get(`/public/search?${params.toString()}`)
@@ -73,8 +75,7 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
           setPages(res.data.pages || 1);
         }
       })
-      .catch((err) => {
-        console.error("Search error:", err);
+      .catch(() => {
         setProviders([]);
       })
       .finally(() => setLoading(false));
@@ -88,6 +89,8 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
       category: selectedCategory,
       city: selectedCity,
       minRating: selectedMinRating,
+      maxPrice: selectedMaxPrice,
+      availability: selectedAvailability,
       sort: selectedSort,
       page: "1",
       ...newParams,
@@ -111,7 +114,20 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
     setSelectedCity("");
     setSelectedMinRating("");
     setSelectedSort("rating");
+    setSelectedMaxPrice("");
+    setSelectedAvailability("");
     setSearchParams({});
+  };
+
+  const toggleMasterService = (serviceId) => {
+    const next = selectedMasterIds.includes(serviceId)
+      ? selectedMasterIds.filter((id) => id !== serviceId)
+      : [...selectedMasterIds, serviceId];
+    const updated = new URLSearchParams(searchParams);
+    if (next.length) updated.set("serviceIds", next.join(","));
+    else updated.delete("serviceIds");
+    updated.set("page", "1");
+    setSearchParams(updated);
   };
 
   const handlePageChange = (newPage) => {
@@ -121,7 +137,7 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const FilterPanelContent = () => (
+  const renderFilterPanel = () => (
     <div className="space-y-6">
       {/* Category */}
       <div>
@@ -181,6 +197,17 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
         </div>
       </div>
 
+      <div>
+        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Maximum cart price (PKR)</label>
+        <input type="number" min="1" value={selectedMaxPrice} onChange={(event) => setSelectedMaxPrice(event.target.value)} className="input-field" placeholder="Any price" />
+      </div>
+      <div>
+        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Availability</label>
+        <select value={selectedAvailability} onChange={(event) => setSelectedAvailability(event.target.value)} className="input-field">
+          <option value="">Any time</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option>
+        </select>
+      </div>
+
       {/* Action Buttons */}
       <div className="pt-4 border-t border-gray-100 flex gap-2">
         <button
@@ -203,6 +230,28 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
 
   const searchContent = (
     <>
+      <section className="mb-8 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+        <h2 className="text-base font-bold text-ink">Choose services</h2>
+        <p className="mt-1 text-xs text-slate-500">Select one or more services to compare providers’ own prices.</p>
+        <div className="mt-4 space-y-4">
+          {masterServices.map(([categorySlug, services]) => (
+            <div key={categorySlug}>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{categorySlug.replaceAll("-", " ")}</h3>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {services.map((service) => {
+                  const checked = selectedMasterIds.includes(service._id);
+                  return <label key={service._id} className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm ${checked ? "border-ink bg-soft" : "border-slate-200"}`}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleMasterService(service._id)} className="accent-black" />
+                    <span className="min-w-0 flex-1">{service.title}</span>
+                    <span className="shrink-0 text-xs text-slate-500">{service.defaultDurationMinutes} min</span>
+                  </label>;
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        {selectedMasterIds.length > 0 && <p className="mt-4 text-sm font-bold text-ink">{selectedMasterIds.length} service{selectedMasterIds.length === 1 ? "" : "s"} selected. Provider totals appear in the results.</p>}
+      </section>
       {/* Search Bar & Header */}
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-gray-100 mb-8">
           <div className="max-w-2xl mb-6">
@@ -270,7 +319,7 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
                   </button>
                 )}
               </div>
-              <FilterPanelContent />
+              {renderFilterPanel()}
             </div>
           </aside>
 
@@ -294,7 +343,10 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
                   className="text-xs font-bold rounded-xl border border-gray-200 px-3 py-2 bg-white focus:outline-none"
                 >
                   <option value="rating">Highest Rated</option>
+                  <option value="price_asc">Price: low to high</option>
+                  <option value="price_desc">Price: high to low</option>
                   <option value="experience">Most Experienced</option>
+                  <option value="newest">Newest</option>
                 </select>
               </div>
             </div>
@@ -370,8 +422,10 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
                       </div>
 
                       {/* Book CTA */}
+                      {selectedMasterIds.length > 0 && <p className="mt-4 text-lg font-extrabold text-ink">PKR {p.cartPrice?.toLocaleString()}</p>}
+                      <p className="mt-1 rounded-full bg-pastel-mint px-3 py-1 text-[10px] font-bold text-emerald-800">{p.availability === "today" ? "Available today" : p.availability === "tomorrow" ? "Available tomorrow" : "Available later"}</p>
                       <Link
-                        to={`/customer/providers/${p._id}`}
+                        to={`${insideCustomerLayout ? `/customer/providers/${p._id}/profile` : `/providers/${p._id}`}${selectedMasterIds.length ? `?serviceIds=${selectedMasterIds.join(",")}${searchParams.get("date") ? `&date=${searchParams.get("date")}` : ""}` : ""}`}
                         className="btn-dark text-xs px-4 py-2.5 mt-5 w-full flex items-center justify-center gap-1"
                       >
                         Book now <ArrowRight className="w-3.5 h-3.5" />
@@ -408,7 +462,7 @@ export default function SearchPage({ insideCustomerLayout: insideCustomerLayoutP
               <X className="w-5 h-5" />
             </button>
           </div>
-          <FilterPanelContent />
+          {renderFilterPanel()}
         </div>
       </div>
     </div>

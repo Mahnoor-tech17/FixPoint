@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowRight,
   Calendar,
-  CheckCircle2,
   Clock,
   CreditCard,
   Loader2,
@@ -25,7 +24,6 @@ export default function ProviderDashboard() {
 
   const fetchDashboard = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/dashboard");
       setData(res.data.dashboard);
       setError("");
@@ -37,7 +35,7 @@ export default function ProviderDashboard() {
   };
 
   useEffect(() => {
-    fetchDashboard();
+    void Promise.resolve().then(fetchDashboard);
   }, []);
 
   const handlePayRegistrationFee = async () => {

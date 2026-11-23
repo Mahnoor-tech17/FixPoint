@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  ArrowLeft,
   CheckCircle2,
   CreditCard,
   Download,
@@ -153,7 +152,6 @@ export default function CustomerPayments() {
 
   const fetchPayments = async (page = 1) => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/customer/payments?page=${page}&limit=20`);
       setPayments(res.data.payments || []);
       setPagination(res.data.pagination || { total: 0, page: 1, pages: 1 });
@@ -165,7 +163,7 @@ export default function CustomerPayments() {
   };
 
   useEffect(() => {
-    fetchPayments();
+    void Promise.resolve().then(() => fetchPayments());
   }, []);
 
   return (

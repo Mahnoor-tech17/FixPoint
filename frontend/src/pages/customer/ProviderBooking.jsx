@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -13,8 +13,7 @@ import {
   AlertCircle,
   Loader2,
   Info,
-  Minus,
-} from "lucide-react";
+  } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 import StarRating from "../../components/common/StarRating";
 import { httpClient, getErrorMessage } from "../../lib/http";
@@ -34,7 +33,6 @@ const detailsSchema = z.object({
 
 export default function ProviderBooking() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const currentUser = getUser();
   const [searchParams] = useSearchParams();
 
@@ -49,7 +47,7 @@ export default function ProviderBooking() {
   const [selectedServiceIds, setSelectedServiceIds] = useState(new Set());
 
   // Step 2: Date & time selection
-  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -60,6 +58,7 @@ export default function ProviderBooking() {
   const [addressArea, setAddressArea] = useState("");
   const [addressCity, setAddressCity] = useState(currentUser?.city || "Lahore");
   const [notes, setNotes] = useState("");
+  const [location, setLocation] = useState(null);
   const [formErrors, setFormErrors] = useState({});
 
   // Submitting
@@ -67,7 +66,6 @@ export default function ProviderBooking() {
 
   // Load provider profile + services
   useEffect(() => {
-    setLoadingProvider(true);
     httpClient
       .get(`/public/providers/${id}`)
       .then((res) => {
@@ -78,7 +76,11 @@ export default function ProviderBooking() {
           const prefillServiceIds = searchParams.get("serviceIds");
           if (prefillServiceIds) {
             const ids = prefillServiceIds.split(",").filter(Boolean);
-            setSelectedServiceIds(new Set(ids));
+            const providerServices = res.data.provider.services || [];
+            const matchingIds = providerServices
+              .filter((service) => ids.includes(service._id) || ids.includes(service.masterServiceId?._id || service.masterServiceId))
+              .map((service) => service._id);
+            setSelectedServiceIds(new Set(matchingIds));
           }
           const prefillDate = searchParams.get("date");
           if (prefillDate) setSelectedDate(prefillDate);
@@ -90,10 +92,10 @@ export default function ProviderBooking() {
         setError(getErrorMessage(err, "Failed to load provider profile"));
       })
       .finally(() => setLoadingProvider(false));
-  }, [id]);
+  }, [id, searchParams]);
 
   // Compute cart
-  const services = provider?.services || [];
+  const services = useMemo(() => provider?.services || [], [provider]);
   const selectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.has(s._id)),
     [services, selectedServiceIds]
@@ -109,44 +111,32 @@ export default function ProviderBooking() {
 
   // Load slots whenever date or selected services change
   useEffect(() => {
-    if (!selectedDate || !id || selectedServiceIds.size === 0) {
-      setSlots([]);
-      return;
-    }
-    setLoadingSlots(true);
-    setSelectedSlot(null);
-    const serviceIdList = Array.from(selectedServiceIds).join(",");
-    httpClient
-      .get(`/public/providers/${id}/slots?date=${selectedDate}&serviceIds=${serviceIdList}&durationMinutes=${totalDuration}`)
-      .then((res) => {
-        if (res.data?.success) {
-          setSlots(res.data.slots || []);
-        } else {
-          setSlots([]);
-        }
-      })
-      .catch(() => setSlots([]))
-      .finally(() => setLoadingSlots(false));
-  }, [id, selectedDate, totalDuration, selectedServiceIds.size]);
+    void Promise.resolve().then(() => {
+      if (!selectedDate || !id || selectedServiceIds.size === 0) {
+        setSlots([]);
+        setLoadingSlots(false);
+        return;
+      }
+      setLoadingSlots(true);
+      setSelectedSlot(null);
+      const serviceIdList = Array.from(selectedServiceIds).join(",");
+      httpClient
+        .get(`/public/providers/${id}/slots?date=${selectedDate}&serviceIds=${serviceIdList}&durationMinutes=${totalDuration}`)
+        .then((res) => setSlots(res.data?.success ? res.data.slots || [] : []))
+        .catch(() => setSlots([]))
+        .finally(() => setLoadingSlots(false));
+    });
+  }, [id, selectedDate, totalDuration, selectedServiceIds]);
 
   // Date quick picker
-  const nextDates = Array.from({ length: 14 }).map((_, i) => {
+  const nextDates = useMemo(() => Array.from({ length: 14 }).map((_, i) => {
     const d = new Date();
     d.setDate(d.getDate() + i);
     const dateStr = d.toISOString().split("T")[0];
     const dayLabel = d.toLocaleDateString("en-US", { weekday: "short" });
     const dayNum = d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
     return { dateStr, dayLabel, dayNum, isToday: i === 0 };
-  });
-
-  if (!selectedDate && nextDates.length > 0) {
-    // We can't call setSelectedDate in render; do it in an effect
-  }
-  useEffect(() => {
-    if (!selectedDate && nextDates.length > 0) {
-      setSelectedDate(nextDates[0].dateStr);
-    }
-  }, []);
+  }), []);
 
   const toggleService = (svcId) => {
     setSelectedServiceIds((prev) => {
@@ -162,6 +152,18 @@ export default function ProviderBooking() {
   const canProceedStep3 = () => {
     const result = detailsSchema.safeParse({ phone, line: addressLine, area: addressArea, city: addressCity, notes });
     return result.success;
+  };
+
+  const captureLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Location is not available in this browser");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => setLocation({ lat: coords.latitude, lng: coords.longitude }),
+      () => toast.error("Could not access your location"),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   const handleSubmit = async () => {
@@ -185,6 +187,7 @@ export default function ProviderBooking() {
         slotEnd: selectedSlot.endTime,
         phone: phone.trim(),
         address: { line: addressLine.trim(), area: addressArea.trim(), city: addressCity.trim() },
+        location,
         notes: notes ? notes.trim() : "",
       };
 
@@ -272,7 +275,7 @@ export default function ProviderBooking() {
                 </div>
               </div>
             </div>
-            <Link to="/customer/search"
+            <Link to={`/customer/search?serviceIds=${selectedServices.map((service) => service.masterServiceId?._id || service.masterServiceId).join(",")}&date=${selectedDate}`}
               className="text-xs font-semibold text-slate-500 hover:text-ink flex items-center gap-1 self-start sm:self-auto">
               <ArrowLeft className="h-3.5 w-3.5" /> Back to search
             </Link>
@@ -499,6 +502,9 @@ export default function ProviderBooking() {
                     <input type="text" value={addressCity} onChange={(e) => setAddressCity(e.target.value)}
                       placeholder="Lahore, Karachi..." className="input-field" />
                     {formErrors.city && <p className="mt-1 text-xs text-red-500">{formErrors.city}</p>}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <button type="button" onClick={captureLocation} className="btn-light justify-center"><MapPin className="h-4 w-4" />{location ? "Location added" : "Add map pin"}</button>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">

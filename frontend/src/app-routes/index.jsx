@@ -34,6 +34,7 @@ import ProviderReviews from "../pages/provider/ProviderReviews";
 import ProviderProfile from "../pages/provider/ProviderProfile";
 import ProviderVerification from "../pages/provider/ProviderVerification";
 import ProviderAvailability from "../pages/provider/ProviderAvailability";
+import ProviderServices from "../pages/provider/ProviderServices";
 import ProviderSettings from "../pages/provider/ProviderSettings";
 import ProviderPaymentSuccess from "../pages/provider/ProviderPaymentSuccess";
 import ProviderPaymentCancelled from "../pages/provider/ProviderPaymentCancelled";
@@ -51,6 +52,7 @@ import AdminReviews from "../pages/admin/AdminReviews";
 import AdminReports from "../pages/admin/AdminReports";
 import AdminSettings from "../pages/admin/AdminSettings";
 import AdminPayments from "../pages/admin/AdminPayments";
+import AdminServices from "../pages/admin/AdminServices";
 
 export default function AppRoutes() {
   return (
@@ -122,6 +124,14 @@ export default function AppRoutes() {
           element={
             <PrivateRoute allowedRoles={["CUSTOMER"]}>
               <ProviderBooking />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/customer/providers/:id/profile"
+          element={
+            <PrivateRoute allowedRoles={["CUSTOMER"]}>
+              <PublicProviderProfile insideCustomerLayout />
             </PrivateRoute>
           }
         />
@@ -224,6 +234,14 @@ export default function AppRoutes() {
           }
         />
         <Route
+          path="/provider/services"
+          element={
+            <PrivateRoute allowedRoles={["PROVIDER"]}>
+              <ProviderServices />
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/provider/settings"
           element={
             <PrivateRoute allowedRoles={["PROVIDER"]}>
@@ -290,6 +308,7 @@ export default function AppRoutes() {
             </PrivateRoute>
           }
         />
+        <Route path="/admin/services" element={<PrivateRoute allowedRoles={["ADMIN"]}><AdminServices /></PrivateRoute>} />
         <Route
           path="/admin/providers"
           element={

@@ -27,7 +27,6 @@ export default function ProviderEarnings() {
 
   const fetchEarnings = async (p = 1) => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/provider/earnings?page=${p}&limit=15`);
       if (res.data?.success) {
         setSummary(res.data.summary);
@@ -41,7 +40,7 @@ export default function ProviderEarnings() {
     }
   };
 
-  useEffect(() => { fetchEarnings(page); }, [page]);
+  useEffect(() => { void Promise.resolve().then(() => fetchEarnings(page)); }, [page]);
 
   return (
     <ProviderLayout title="My Earnings">

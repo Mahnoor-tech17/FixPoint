@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
   Briefcase,
-  Calendar,
   Filter,
   Loader2,
   Mail,
   Phone,
   Plus,
   Search,
-  User,
   X,
 } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
@@ -78,9 +76,8 @@ export default function AdminProviders() {
   }, []);
 
   // Fetch providers whenever filters change
-  const fetchProviders = async () => {
+  const fetchProviders = useCallback(async () => {
     try {
-      setLoading(true);
       const params = {};
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       if (statusFilter) params.status = statusFilter;
@@ -93,11 +90,11 @@ export default function AdminProviders() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedSearch, statusFilter, categoryFilter]);
 
   useEffect(() => {
-    fetchProviders();
-  }, [debouncedSearch, statusFilter, categoryFilter]);
+    void Promise.resolve().then(fetchProviders);
+  }, [fetchProviders]);
 
   const activeCategories = useMemo(
     () => categories.filter((c) => c.isActive),

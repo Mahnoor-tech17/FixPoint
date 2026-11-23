@@ -5,6 +5,16 @@ import AdminLayout from "../../components/admin/AdminLayout";
 import Spinner from "../../components/common/Spinner";
 import { httpClient, getErrorMessage } from "../../lib/http";
 
+function Field({ label, hint, children }) {
+  return (
+    <div>
+      <label className="text-xs font-bold text-ink block mb-1">{label}</label>
+      {children}
+      {hint && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
 export default function AdminSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -25,7 +35,6 @@ export default function AdminSettings() {
   const [slotHoldMinutes, setSlotHoldMinutes] = useState(10);
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get("/settings")
       .then((res) => {
@@ -90,14 +99,6 @@ export default function AdminSettings() {
     );
   }
 
-  const Field = ({ label, hint, children }) => (
-    <div>
-      <label className="text-xs font-bold text-ink block mb-1">{label}</label>
-      {children}
-      {hint && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
-    </div>
-  );
-
   return (
     <AdminLayout title="Platform Settings">
       <div className="space-y-6 max-w-3xl">
@@ -153,7 +154,7 @@ export default function AdminSettings() {
                   className="w-full text-xs font-semibold rounded-xl border border-gray-200 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#111111]" />
               </Field>
               <Field label="Customer No-Show Wait (Minutes after slot)" hint="Provider must wait this long before marking customer no-show.">
-                <input type="number" min={15} max={240} required value={customerNoShowWaitMinutes}
+                <input type="number" min={30} max={180} required value={customerNoShowWaitMinutes}
                   onChange={(e) => setCustomerNoShowWaitMinutes(e.target.value)}
                   className="w-full text-xs font-semibold rounded-xl border border-gray-200 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#111111]" />
               </Field>

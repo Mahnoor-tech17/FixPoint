@@ -78,8 +78,8 @@ function startReminderCron() {
         await booking.save();
 
         const serviceNames = (booking.items || []).map((i) => i.title).join(", ") || "your service";
-        const customerId = booking.customer || booking.customerId;
-        const providerId = booking.provider || booking.providerId;
+        const customerId = booking.customer;
+        const providerId = booking.provider;
 
         await sendReminderEmail(
           customerId,
@@ -103,7 +103,7 @@ function startReminderCron() {
       });
 
       for (const booking of awaitingNearDeadline) {
-        const providerId = booking.provider || booking.providerId;
+        const providerId = booking.provider;
         const serviceNames = (booking.items || []).map((i) => i.title).join(", ") || "a service";
         await sendReminderEmail(
           providerId,
@@ -126,20 +126,20 @@ function startReminderCron() {
       for (const b of confirmedBookings) {
         const bDate = new Date(`${b.date}T00:00:00Z`);
         const dayDiff = Math.round((bDate - todayMidnight) / (1000 * 60 * 60 * 24));
-        const bMinutes = toMinutes(b.slotStart || b.startTime) || 0;
+        const bMinutes = toMinutes(b.slotStart) || 0;
         const totalMinutesUntil = dayDiff * 24 * 60 + (bMinutes - toMinutes(nowTime));
         const serviceNames = (b.items || []).map((i) => i.title).join(", ") || "your service";
-        const customerId = b.customer || b.customerId;
-        const providerId = b.provider || b.providerId;
+        const customerId = b.customer;
+        const providerId = b.provider;
 
         // 24h reminder (between 22h and 26h)
         if (!b.reminder24hSent && totalMinutesUntil >= 1320 && totalMinutesUntil <= 1560) {
           b.reminder24hSent = true;
           await b.save();
           await sendReminderEmail(customerId, "Upcoming Appointment Tomorrow",
-            `Reminder: Your appointment (${b.bookingId}) for ${serviceNames} is scheduled for tomorrow at ${b.slotStart || b.startTime}.`);
+            `Reminder: Your appointment (${b.bookingId}) for ${serviceNames} is scheduled for tomorrow at ${b.slotStart}.`);
           await sendReminderEmail(providerId, "Upcoming Job Tomorrow",
-            `Reminder: You have a scheduled appointment (${b.bookingId}) tomorrow at ${b.slotStart || b.startTime} for ${serviceNames}.`);
+            `Reminder: You have a scheduled appointment (${b.bookingId}) tomorrow at ${b.slotStart} for ${serviceNames}.`);
         }
 
         // 1h reminder (between 30m and 90m)
@@ -147,12 +147,12 @@ function startReminderCron() {
           b.reminder1hSent = true;
           await b.save();
           await sendReminderEmail(customerId, "Appointment in 1 Hour",
-            `Your provider is scheduled to arrive at ${b.slotStart || b.startTime} for ${serviceNames} (${b.bookingId}).`);
+            `Your provider is scheduled to arrive at ${b.slotStart} for ${serviceNames} (${b.bookingId}).`);
           const addr = b.address
             ? `${b.address.line || ""}${b.address.area ? ", " + b.address.area : ""}${b.address.city ? ", " + b.address.city : ""}`
             : "see the app";
           await sendReminderEmail(providerId, "Upcoming Job in 1 Hour",
-            `Your job for ${serviceNames} (${b.bookingId}) starts at ${b.slotStart || b.startTime}. Address: ${addr}.`);
+            `Your job for ${serviceNames} (${b.bookingId}) starts at ${b.slotStart}. Address: ${addr}.`);
         }
       }
 
@@ -168,7 +168,7 @@ function startReminderCron() {
       });
 
       for (const b of confirmedForNoShow) {
-        const slotStartMins = toMinutes(b.slotStart || b.startTime) || 0;
+        const slotStartMins = toMinutes(b.slotStart) || 0;
         const dateParts = b.date.split("-").map(Number);
         const slotStartUtcMs =
           Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]) +
@@ -179,8 +179,8 @@ function startReminderCron() {
 
         // Alert between noShowWaitMinutes and noShowWaitMinutes+20 (once per window)
         if (minutesSinceSlotStart >= settings.noShowWaitMinutes && minutesSinceSlotStart < settings.noShowWaitMinutes + 20) {
-          const customerId = b.customer || b.customerId;
-          const providerId = b.provider || b.providerId;
+          const customerId = b.customer;
+          const providerId = b.provider;
           const serviceNames = (b.items || []).map((i) => i.title).join(", ") || "your service";
 
           await sendReminderEmail(providerId, "Action Required - Scheduled Job",

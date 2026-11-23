@@ -1,15 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import {
-  Star,
   MapPin,
   Clock,
   ShieldCheck,
   Calendar,
-  CheckCircle2,
   ArrowRight,
   MessageSquare,
-  Sparkles,
 } from "lucide-react";
 import Navbar from "../../components/common/Navbar";
 import Footer from "../../components/common/Footer";
@@ -17,11 +14,14 @@ import Spinner from "../../components/common/Spinner";
 import EmptyState from "../../components/common/EmptyState";
 import Pagination from "../../components/common/Pagination";
 import StarRating from "../../components/common/StarRating";
+import CustomerLayout from "../../components/customer/CustomerLayout";
 import { httpClient } from "../../lib/http";
+import { getUserRole, isTokenValid } from "../../lib/local-storage";
 
-export default function PublicProviderProfile() {
+export default function PublicProviderProfile({ insideCustomerLayout = false }) {
   const { id } = useParams();
-  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const showCustomerLayout = insideCustomerLayout || (isTokenValid() && getUserRole() === "CUSTOMER");
 
   const [provider, setProvider] = useState(null);
   const [services, setServices] = useState([]);
@@ -37,7 +37,6 @@ export default function PublicProviderProfile() {
   const [reviewsLoading, setReviewsLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get(`/public/providers/${id}`)
       .then((res) => {
@@ -54,7 +53,6 @@ export default function PublicProviderProfile() {
   }, [id]);
 
   useEffect(() => {
-    setReviewsLoading(true);
     httpClient
       .get(`/public/providers/${id}/reviews?page=${reviewPage}&limit=5`)
       .then((res) => {
@@ -72,6 +70,9 @@ export default function PublicProviderProfile() {
   }, [id, reviewPage]);
 
   if (loading) {
+    if (showCustomerLayout) {
+      return <CustomerLayout title="Provider Profile"><div className="flex min-h-64 items-center justify-center"><Spinner size="lg" /></div></CustomerLayout>;
+    }
     return (
       <div className="min-h-screen bg-soft flex flex-col">
         <Navbar />
@@ -84,6 +85,15 @@ export default function PublicProviderProfile() {
   }
 
   if (error || !provider) {
+    if (showCustomerLayout) {
+      return (
+        <CustomerLayout title="Provider Not Found">
+          <div className="max-w-xl mx-auto py-12 text-center">
+            <EmptyState title="Provider Not Found" description={error || "The requested service provider is currently unavailable."} action={<Link to="/customer/search" className="btn-dark text-xs px-5 py-2.5">Browse Other Providers</Link>} />
+          </div>
+        </CustomerLayout>
+      );
+    }
     return (
       <div className="min-h-screen bg-soft flex flex-col">
         <Navbar />
@@ -103,9 +113,13 @@ export default function PublicProviderProfile() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-soft flex flex-col">
-      <Navbar />
+  const withProfileLayout = (content) => showCustomerLayout
+    ? <CustomerLayout title="Provider Profile">{content}</CustomerLayout>
+    : content;
+
+  return withProfileLayout((
+    <div className={showCustomerLayout ? "w-full" : "min-h-screen bg-soft flex flex-col"}>
+      {!showCustomerLayout && <Navbar />}
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
         {/* Profile Card Header */}
@@ -256,7 +270,7 @@ export default function PublicProviderProfile() {
                       </div>
 
                       <Link
-                        to={`/book?providerId=${provider._id}&serviceId=${srv._id}`}
+                        to={`/customer/providers/${provider._id}?serviceIds=${searchParams.get("serviceIds") || srv._id}${searchParams.get("date") ? `&date=${searchParams.get("date")}` : ""}`}
                         className="btn-dark text-xs px-5 py-2.5 flex items-center gap-1.5"
                       >
                         Book Now
@@ -344,7 +358,7 @@ export default function PublicProviderProfile() {
         </div>
       </main>
 
-      <Footer />
+      {!showCustomerLayout && <Footer />}
     </div>
-  );
+  ));
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -38,9 +38,8 @@ export default function AdminCategories() {
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchCategories = async () => {
+  const fetchCategories = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/admin/categories");
       setCategories(res.data.categories || []);
     } catch (err) {
@@ -48,11 +47,11 @@ export default function AdminCategories() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchCategories();
-  }, []);
+    void Promise.resolve().then(fetchCategories);
+  }, [fetchCategories]);
 
   const openAddModal = () => {
     setFormName("");

@@ -74,7 +74,7 @@ const createReview = async (req, res) => {
     const review = await ReviewModel.create({
       bookingId: booking._id,
       customerId,
-      providerId: booking.providerId,
+      providerId: booking.provider,
       serviceId: booking.serviceId,
       rating: ratingNum,
       comment: comment ? comment.trim() : "",
@@ -84,7 +84,7 @@ const createReview = async (req, res) => {
     booking.reviewed = true;
     await booking.save();
 
-    await recalculateProviderRating(booking.providerId);
+    await recalculateProviderRating(booking.provider);
 
 
     return res.status(201).json({
@@ -109,7 +109,7 @@ const getMyReviews = async (req, res) => {
     const [reviews, total] = await Promise.all([
       ReviewModel.find({ customerId })
         .populate("providerId", "firstName lastName profilePhoto serviceCategory")
-        .populate("bookingId", "bookingId serviceTitle date startTime")
+        .populate("bookingId", "bookingId items date slotStart")
         .sort({ createdAt: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
@@ -224,7 +224,7 @@ const getAllReviews = async (req, res) => {
       ReviewModel.find(filter)
         .populate("customerId", "firstName lastName email")
         .populate("providerId", "firstName lastName serviceCategory")
-        .populate("bookingId", "bookingId serviceTitle date")
+        .populate("bookingId", "bookingId items date slotStart")
         .sort({ createdAt: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)

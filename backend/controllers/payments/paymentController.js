@@ -1,4 +1,4 @@
-const { getStripe } = require("../../services/stripeService");
+const { constructWebhookEvent } = require("../../services/stripeService");
 const PaymentModel = require("../../models/paymentModel");
 const UserModel = require("../../models/userModel");
 const BookingModel = require("../../models/bookingModel");
@@ -10,13 +10,10 @@ const handleStripeWebhook = async (req, res) => {
 
   let event;
   try {
-    const stripe = getStripe();
-    if (webhookSecret) {
-      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    } else {
+    if (!webhookSecret) {
       console.warn("WARNING: STRIPE_WEBHOOK_SECRET not set; parsing raw event without signature verification.");
-      event = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     }
+    event = constructWebhookEvent(req.body, sig, webhookSecret);
   } catch (err) {
     console.error("Webhook signature verification failed:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);

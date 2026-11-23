@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { User, Phone, Calendar, Search } from "lucide-react";
+import { useState, useEffect } from "react";
+import { User, Search } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
 import Spinner from "../../components/common/Spinner";
 import EmptyState from "../../components/common/EmptyState";
@@ -11,7 +11,6 @@ export default function ProviderCustomers() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get("/bookings?limit=200")
       .then((res) => {
@@ -21,13 +20,13 @@ export default function ProviderCustomers() {
           // Group by customer
           const map = new Map();
           bookings.forEach((b) => {
-            const cId = b.customerId?._id || b.customerId;
+            const cId = b.customer?._id || b.customer;
             if (!cId) return;
 
             if (!map.has(cId)) {
               map.set(cId, {
                 id: cId,
-                name: `${b.customerId?.firstName || "Customer"} ${b.customerId?.lastName || ""}`.trim(),
+                name: `${b.customer?.firstName || "Customer"} ${b.customer?.lastName || ""}`.trim(),
                 phone: b.customerPhone || "N/A",
                 bookingsCount: 0,
                 lastBookingDate: b.date,

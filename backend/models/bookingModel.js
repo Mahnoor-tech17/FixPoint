@@ -120,22 +120,9 @@ const BookingSchema = new mongoose.Schema(
     // Review flag
     reviewed: { type: Boolean, default: false },
 
-    // Legacy / migration compat aliases (read-only virtual getters)
-    // These let old code that reads .startTime / .customerId still work
-    // without duplicating stored data.
   },
-  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+  { timestamps: true }
 );
-
-// ---- Virtual aliases for backward-compat (read only) ----
-BookingSchema.virtual("startTime").get(function () { return this.slotStart; });
-BookingSchema.virtual("endTime").get(function () { return this.slotEnd; });
-BookingSchema.virtual("customerId").get(function () { return this.customer; });
-BookingSchema.virtual("providerId").get(function () { return this.provider; });
-// category / serviceTitle convenience getters
-BookingSchema.virtual("serviceTitle").get(function () {
-  return this.items?.[0]?.title || "";
-});
 
 // ---- Indexes ----
 // Partial unique index: prevents double booking for active statuses

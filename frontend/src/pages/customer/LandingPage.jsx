@@ -11,7 +11,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Star,
   Wrench,
   Zap,
   MapPin,

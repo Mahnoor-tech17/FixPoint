@@ -1,18 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  AlertCircle,
   ArrowRight,
   Calendar,
-  CheckCircle2,
   Clock,
   Edit2,
-  FileCheck,
   FileText,
-  MapPin,
   ShieldAlert,
   ShieldCheck,
-  User,
   Wrench,
 } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
@@ -25,7 +20,6 @@ export default function ProviderVerification() {
 
   const fetchProfile = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/profile");
       setProvider(res.data.provider);
       setError("");
@@ -37,7 +31,7 @@ export default function ProviderVerification() {
   };
 
   useEffect(() => {
-    fetchProfile();
+    void Promise.resolve().then(fetchProfile);
   }, []);
 
   const status = provider?.providerStatus || "invited";

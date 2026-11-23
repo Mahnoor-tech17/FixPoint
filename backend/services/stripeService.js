@@ -91,10 +91,21 @@ async function refundPayment(paymentIntentId, amount = null) {
   return stripe.refunds.create(refundPayload);
 }
 
+async function retrieveCheckoutSession(sessionId) {
+  return getStripe().checkout.sessions.retrieve(sessionId);
+}
+
+function constructWebhookEvent(payload, signature, webhookSecret) {
+  if (!webhookSecret) return typeof payload === "string" ? JSON.parse(payload) : payload;
+  return getStripe().webhooks.constructEvent(payload, signature, webhookSecret);
+}
+
 module.exports = {
   getStripe,
   createCheckoutSession,
   capturePaymentIntent,
   cancelPaymentIntent,
   refundPayment,
+  retrieveCheckoutSession,
+  constructWebhookEvent,
 };

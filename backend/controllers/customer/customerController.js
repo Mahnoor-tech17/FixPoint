@@ -17,7 +17,7 @@ const {
 } = require("../../config/fees");
 const {
   createCheckoutSession,
-  getStripe,
+  retrieveCheckoutSession,
   cancelPaymentIntent,
   refundPayment,
 } = require("../../services/stripeService");
@@ -156,9 +156,7 @@ const createCustomerBooking = async (req, res) => {
       serviceId, // backward compat
       date,
       slotStart,
-      startTime, // backward compat
       slotEnd,
-      endTime, // backward compat
       phone,
       customerPhone, // backward compat
       address,
@@ -166,8 +164,8 @@ const createCustomerBooking = async (req, res) => {
       location,
     } = req.body;
 
-    const actualSlotStart = slotStart || startTime;
-    let actualSlotEnd = slotEnd || endTime;
+    const actualSlotStart = slotStart;
+    let actualSlotEnd = slotEnd;
     const actualPhone = (phone || customerPhone || "").trim();
 
     // 1. Basic validation
@@ -256,19 +254,19 @@ const createCustomerBooking = async (req, res) => {
       _id: { $in: requestedServiceIds },
       providerId: provider._id,
       isActive: true,
-    });
+    }).populate("masterServiceId");
 
-    if (matchedServices.length !== requestedServiceIds.length) {
+    if (matchedServices.length !== requestedServiceIds.length || matchedServices.some((service) => !service.masterServiceId?.isActive)) {
       return res.status(400).json({
         success: false,
-        message: "One or more selected services are not offered by this provider or are currently inactive.",
+        message: "One or more selected services are unavailable or are based on an inactive master service.",
       });
     }
 
     // Build items array and calculate totals
     const items = matchedServices.map((s) => ({
       serviceId: s._id,
-      masterServiceId: s.masterServiceId || undefined,
+      masterServiceId: s.masterServiceId._id,
       title: s.title,
       price: s.price,
       durationMinutes: s.durationMinutes,
@@ -513,7 +511,7 @@ const verifyBookingPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: "session_id missing" });
     }
 
-    const session = await getStripe().checkout.sessions.retrieve(session_id);
+    const session = await retrieveCheckoutSession(session_id);
     const meta = session.metadata || {};
 
     if (meta.type !== "booking_payment" || meta.customerId !== String(req.user.userId)) {
@@ -715,19 +713,21 @@ const customerMarksProviderNoShow = async (req, res) => {
       });
     }
 
-    // Check that at least 1 hour has passed since slot start time in PKT
+    const settings = await SettingModel.getSettings();
+    const waitMinutes = settings.customerNoShowWaitMinutes ?? 60;
+    // Check the configured wait from the slot start in PKT
     const pktNow = getPKTNow();
     const slotStartMin = toMinutes(booking.slotStart);
     const nowMin = toMinutes(pktNow.time);
 
-    const isAfterOneHour =
+    const isAfterWait =
       booking.date < pktNow.date ||
-      (booking.date === pktNow.date && nowMin >= slotStartMin + 60);
+      (booking.date === pktNow.date && nowMin >= slotStartMin + waitMinutes);
 
-    if (!isAfterOneHour) {
+    if (!isAfterWait) {
       return res.status(400).json({
         success: false,
-        message: "You can report a provider no-show 1 hour after the scheduled appointment start time.",
+        message: `You can report a provider no-show ${waitMinutes} minutes after the scheduled appointment start time.`,
       });
     }
 
@@ -821,7 +821,7 @@ const getCustomerBookings = async (req, res) => {
     const sortOrder = scope === "upcoming" ? { date: 1, slotStart: 1 } : { date: -1, slotStart: -1 };
 
     const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
-    const [bookings, total] = await Promise.all([
+    const [bookings, total, settings] = await Promise.all([
       BookingModel.find(query)
         .sort(sortOrder)
         .skip(skip)
@@ -830,6 +830,7 @@ const getCustomerBookings = async (req, res) => {
         .populate("items.serviceId", "title price durationMinutes images")
         .lean(),
       BookingModel.countDocuments(query),
+      SettingModel.getSettings(),
     ]);
 
     // Privacy masking: Reveal provider phone only when booking is confirmed / in progress / completed
@@ -860,6 +861,7 @@ const getCustomerBookings = async (req, res) => {
     return res.status(200).json({
       success: true,
       bookings: sanitized,
+      customerNoShowWaitMinutes: settings.customerNoShowWaitMinutes ?? 60,
       pagination: {
         total,
         page: parseInt(page, 10),

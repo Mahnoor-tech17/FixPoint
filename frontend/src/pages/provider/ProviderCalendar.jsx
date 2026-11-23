@@ -1,5 +1,4 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -7,8 +6,7 @@ import {
   Clock,
   User,
   MapPin,
-  CheckCircle2,
-} from "lucide-react";
+  } from "lucide-react";
 import ProviderLayout from "../../components/provider/ProviderLayout";
 import StatusBadge from "../../components/common/StatusBadge";
 import Spinner from "../../components/common/Spinner";
@@ -25,7 +23,6 @@ export default function ProviderCalendar() {
   const month = currentDate.getMonth();
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get("/bookings?limit=100")
       .then((res) => {
@@ -181,19 +178,19 @@ export default function ProviderCalendar() {
                         <StatusBadge status={b.status} />
                       </div>
 
-                      <h4 className="text-sm font-bold text-ink">{b.serviceTitle}</h4>
+                      <h4 className="text-sm font-bold text-ink">{b.items?.map((item) => item.title).join(", ")}</h4>
 
                       <div className="flex items-center gap-2 text-xs text-gray-500">
                         <Clock className="w-3.5 h-3.5 text-gray-400" />
                         <span>
-                          {b.startTime} - {b.endTime}
+                          {b.slotStart} - {b.slotEnd}
                         </span>
                       </div>
 
                       <div className="flex items-center gap-2 text-xs text-gray-500">
                         <User className="w-3.5 h-3.5 text-gray-400" />
                         <span>
-                          {b.customerId?.firstName} {b.customerId?.lastName}
+                          {b.customerName}
                         </span>
                       </div>
 

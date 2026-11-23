@@ -48,42 +48,6 @@ const isBookingStartTimePassed = (bookingDate, bookingStartTime) => {
   return toMinutes(bookingStartTime) <= toMinutes(pktNow.time);
 };
 
-// Helper to attach compatibility aliases for frontend
-const attachBookingCompat = (b) => {
-  if (!b) return b;
-  const cust = b.customer || b.customerId;
-  const prov = b.provider || b.providerId;
-  const sStart = b.slotStart || b.startTime;
-  const sEnd = b.slotEnd || b.endTime;
-  const total = b.total !== undefined ? b.total : (b.priceSnapshot || b.price || 0);
-  const street = b.address?.line || b.customerStreet || "";
-  const city = b.address?.city || b.customerCity || "";
-  const area = b.address?.area || b.customerCity || "";
-  const phone = b.phone || b.customerPhone || "";
-  const primaryTitle = b.items?.[0]?.title || b.serviceTitle || "Service";
-
-  return {
-    ...b,
-    customer: cust,
-    customerId: cust,
-    provider: prov,
-    providerId: prov,
-    slotStart: sStart,
-    startTime: sStart,
-    slotEnd: sEnd,
-    endTime: sEnd,
-    total,
-    priceSnapshot: total,
-    price: total,
-    serviceTitle: primaryTitle,
-    customerStreet: street,
-    customerCity: city,
-    customerArea: area,
-    customerPhone: phone,
-    phone,
-  };
-};
-
 // ================= CREATE BOOKING (Customer only / Backward compatibility) =================
 const createBooking = async (req, res) => {
   try {
@@ -139,11 +103,11 @@ const createBooking = async (req, res) => {
     // 3. Fetch and validate service
     const service = await ServiceModel.findOne({
       _id: serviceId,
-      provider: provider._id,
+      providerId: provider._id,
       isActive: true,
-    });
+    }).populate("masterServiceId");
 
-    if (!service) {
+    if (!service?.masterServiceId?.isActive) {
       return res.status(404).json({
         success: false,
         message: "Selected service is no longer available",
@@ -255,19 +219,19 @@ const getBookings = async (req, res) => {
 
     const filter = {};
 
-    // Role-based scoping (check both unified customer/provider and legacy aliases)
+    // Role-based scoping
     if (role === "CUSTOMER") {
-      filter.$or = [{ customer: userId }, { customerId: userId }];
+      filter.customer = userId;
     } else if (role === "PROVIDER") {
-      filter.$or = [{ provider: userId }, { providerId: userId }];
+      filter.provider = userId;
     }
     // Admin sees all, or can filter by specific provider/customer
     if (role === "ADMIN") {
       if (req.query.providerId && mongoose.isValidObjectId(req.query.providerId)) {
-        filter.$or = [{ provider: req.query.providerId }, { providerId: req.query.providerId }];
+        filter.provider = req.query.providerId;
       }
       if (req.query.customerId && mongoose.isValidObjectId(req.query.customerId)) {
-        filter.$or = [{ customer: req.query.customerId }, { customerId: req.query.customerId }];
+        filter.customer = req.query.customerId;
       }
     }
 
@@ -307,10 +271,10 @@ const getBookings = async (req, res) => {
       BookingModel.countDocuments(filter),
     ]);
 
-    // Apply privacy masking on phone numbers for list and attach compat fields
+    // Apply privacy masking on contact details
     const sanitized = bookings.map((b) => {
-      const cId = (b.customer?._id || b.customer || b.customerId)?.toString();
-      const pId = (b.provider?._id || b.provider || b.providerId)?.toString();
+      const cId = b.customer?._id?.toString();
+      const pId = b.provider?._id?.toString();
       const isOwner = role === "CUSTOMER" && cId === userId;
       const isAssignedProvider = role === "PROVIDER" && pId === userId;
       const isAdmin = role === "ADMIN";
@@ -318,13 +282,12 @@ const getBookings = async (req, res) => {
       const showCustomerContact = isAssignedProvider || isAdmin;
       const showProviderContact = (isOwner && ["confirmed", "on_the_way", "in_progress", "completed"].includes(b.status)) || isAdmin;
 
-      const compat = attachBookingCompat(b);
       return {
-        ...compat,
-        customerPhone: showCustomerContact ? compat.customerPhone : undefined,
-        provider: compat.provider
+        ...b,
+        customerPhone: showCustomerContact ? b.phone : undefined,
+        provider: b.provider
           ? {
-              ...compat.provider,
+              ...b.provider,
               phone: showProviderContact ? compat.provider.phone : undefined,
             }
           : undefined,
@@ -360,8 +323,8 @@ const getBookingDetails = async (req, res) => {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    const cId = (booking.customer?._id || booking.customer || booking.customerId)?.toString();
-    const pId = (booking.provider?._id || booking.provider || booking.providerId)?.toString();
+    const cId = (booking.customer?._id || booking.customer)?.toString();
+    const pId = (booking.provider?._id || booking.provider)?.toString();
 
     // Ownership check
     const isCustomer = cId === userId;
@@ -372,21 +335,18 @@ const getBookingDetails = async (req, res) => {
       return res.status(403).json({ success: false, message: "Access denied to this booking" });
     }
 
-    const compat = attachBookingCompat(booking);
+    const responseBooking = booking;
 
     // Privacy masking: Customer sees provider's phone only if confirmed, on_the_way, in_progress, completed
-    if (isCustomer && !["confirmed", "on_the_way", "in_progress", "completed"].includes(compat.status)) {
-      if (compat.provider) {
-        delete compat.provider.phone;
-      }
-      if (compat.providerId) {
-        delete compat.providerId.phone;
+    if (isCustomer && !["confirmed", "on_the_way", "in_progress", "completed"].includes(responseBooking.status)) {
+      if (responseBooking.provider) {
+        delete responseBooking.provider.phone;
       }
     }
 
     return res.status(200).json({
       success: true,
-      booking: compat,
+      booking: responseBooking,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -409,7 +369,7 @@ const updateBookingStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
-    const pId = (booking.provider || booking.providerId)?.toString();
+    const pId = booking.provider?.toString();
     const isProvider = pId === userId;
     const isAdmin = role === "ADMIN";
 
@@ -427,9 +387,9 @@ const updateBookingStatus = async (req, res) => {
       });
     }
 
-    const sStart = booking.slotStart || booking.startTime;
-    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
-    const cId = booking.customer || booking.customerId;
+    const sStart = booking.slotStart;
+    const title = booking.items?.[0]?.title || "Service";
+    const cId = booking.customer;
 
     if (status === "confirmed") {
       if (!["pending", "pending_payment", "awaiting_provider"].includes(currentStatus)) {
@@ -503,7 +463,7 @@ const cancelCustomerBooking = async (req, res) => {
 
     const booking = await BookingModel.findOne({
       _id: id,
-      $or: [{ customer: customerId }, { customerId }],
+      customer: customerId,
     });
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
@@ -516,9 +476,9 @@ const cancelCustomerBooking = async (req, res) => {
       });
     }
 
-    const sStart = booking.slotStart || booking.startTime;
-    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
-    const pId = booking.provider || booking.providerId;
+    const sStart = booking.slotStart;
+    const title = booking.items?.[0]?.title || "Service";
+    const pId = booking.provider;
 
     // Cutoff check for CONFIRMED bookings
     if (booking.status === "confirmed") {
@@ -572,7 +532,7 @@ const rescheduleBooking = async (req, res) => {
 
     const booking = await BookingModel.findOne({
       _id: id,
-      $or: [{ customer: customerId }, { customerId }],
+      customer: customerId,
     });
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
@@ -585,8 +545,8 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    const sStart = booking.slotStart || booking.startTime;
-    const pId = booking.provider || booking.providerId;
+    const sStart = booking.slotStart;
+    const pId = booking.provider;
 
     // Cutoff check for CONFIRMED bookings
     if (booking.status === "confirmed") {
@@ -643,7 +603,7 @@ const rescheduleBooking = async (req, res) => {
 
     await booking.save();
 
-    const title = booking.items?.[0]?.title || booking.serviceTitle || "Service";
+    const title = booking.items?.[0]?.title || "Service";
 
     // Email provider
     await sendBookingEmail(

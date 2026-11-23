@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   ArrowRight,
   Calendar,
@@ -48,7 +48,6 @@ function ReceiptView({ payment, user }) {
 
 export default function ProviderPaymentSuccess() {
   const user = getUser();
-  const navigate = useNavigate();
   const [verifying, setVerifying] = useState(true);
   const [confirmed, setConfirmed] = useState(false);
   const [payment, setPayment] = useState(null);
@@ -77,7 +76,9 @@ export default function ProviderPaymentSuccess() {
           try {
             const pmtRes = await httpClient.get("/provider/payments?limit=1");
             if (pmtRes.data?.payments?.[0]) setPayment(pmtRes.data.payments[0]);
-          } catch {}
+          } catch {
+            // The confirmation view remains valid when receipt details are unavailable.
+          }
           return true;
         }
       } catch (err) {

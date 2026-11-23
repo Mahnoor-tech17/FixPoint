@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
 import { CreditCard, Clock, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 import { httpClient, getErrorMessage } from "../../lib/http";
@@ -9,14 +8,12 @@ export default function CustomerPaymentSuccess() {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get("session_id");
 
-  const [verifying, setVerifying] = useState(true);
+  const [verifying, setVerifying] = useState(Boolean(sessionId));
   const [booking, setBooking] = useState(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(sessionId ? "" : "No session ID found in the URL.");
 
   useEffect(() => {
     if (!sessionId) {
-      setError("No session ID found in the URL.");
-      setVerifying(false);
       return;
     }
 

@@ -3,18 +3,13 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
-  AlertCircle,
-  Check,
   Clock,
-  DollarSign,
   Edit2,
-  Image as ImageIcon,
-  Loader2,
+  Image as Loader2,
   Plus,
   Power,
   ShieldAlert,
   Trash2,
-  Upload,
   Wrench,
   X,
 } from "lucide-react";
@@ -24,32 +19,16 @@ import ConfirmDialog from "../../components/common/ConfirmDialog";
 import { getErrorMessage, httpClient } from "../../lib/http";
 import { useProviderStatus } from "../../components/provider/useProviderStatus";
 
-const SERVICE_TYPES = [
-  { value: "repair", label: "Repair" },
-  { value: "installation", label: "Installation" },
-  { value: "maintenance", label: "Maintenance" },
-  { value: "cleaning", label: "Cleaning" },
-  { value: "inspection", label: "Inspection" },
-  { value: "other", label: "Other" },
-];
-
 const serviceSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(3, "Title must be at least 3 characters")
-    .max(100, "Title cannot exceed 100 characters"),
-  description: z.string().trim().max(1000, "Description cannot exceed 1000 characters").optional(),
+  masterServiceId: z.string().min(1, "Choose a service"),
   price: z
     .number({ invalid_type_error: "Price must be a valid number" })
     .positive("Price must be greater than 0"),
-  priceType: z.enum(["fixed", "hourly"]),
   durationMinutes: z
     .number({ invalid_type_error: "Duration must be a valid number" })
     .int("Duration must be a whole number of minutes")
     .min(15, "Duration must be at least 15 minutes")
     .max(480, "Duration cannot exceed 480 minutes (8 hours)"),
-  serviceType: z.enum(["repair", "installation", "maintenance", "cleaning", "inspection", "other"]),
 });
 
 export default function ProviderServices() {
@@ -57,6 +36,7 @@ export default function ProviderServices() {
   const fileInputRef = useRef(null);
 
   const [services, setServices] = useState([]);
+  const [masterServices, setMasterServices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Modal states
@@ -65,12 +45,9 @@ export default function ProviderServices() {
   const [deletingService, setDeletingService] = useState(null);
 
   // Form states
-  const [formTitle, setFormTitle] = useState("");
-  const [formDescription, setFormDescription] = useState("");
+  const [formMasterServiceId, setFormMasterServiceId] = useState("");
   const [formPrice, setFormPrice] = useState("");
-  const [formPriceType, setFormPriceType] = useState("fixed");
   const [formDuration, setFormDuration] = useState("60");
-  const [formServiceType, setFormServiceType] = useState("other");
   const [formImages, setFormImages] = useState([]);
   const [formIsActive, setFormIsActive] = useState(true);
 
@@ -81,9 +58,10 @@ export default function ProviderServices() {
 
   const fetchServices = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/services");
       setServices(res.data.services || []);
+      const catalog = await httpClient.get("/provider/master-services");
+      setMasterServices(catalog.data.services || []);
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
@@ -93,17 +71,14 @@ export default function ProviderServices() {
 
   useEffect(() => {
     if (providerStatus === "approved") {
-      fetchServices();
+      void Promise.resolve().then(fetchServices);
     }
   }, [providerStatus]);
 
   const openAddModal = () => {
-    setFormTitle("");
-    setFormDescription("");
+    setFormMasterServiceId("");
     setFormPrice("");
-    setFormPriceType("fixed");
     setFormDuration("60");
-    setFormServiceType("other");
     setFormImages([]);
     setFormIsActive(true);
     setFormErrors({});
@@ -112,12 +87,9 @@ export default function ProviderServices() {
 
   const openEditModal = (service) => {
     setEditingService(service);
-    setFormTitle(service.title || "");
-    setFormDescription(service.description || "");
+    setFormMasterServiceId(service.masterServiceId?._id || service.masterServiceId || "");
     setFormPrice(String(service.price || ""));
-    setFormPriceType(service.priceType || "fixed");
     setFormDuration(String(service.durationMinutes || "60"));
-    setFormServiceType(service.serviceType || "other");
     setFormImages(Array.isArray(service.images) ? service.images : []);
     setFormIsActive(service.isActive ?? true);
     setFormErrors({});
@@ -171,12 +143,9 @@ export default function ProviderServices() {
     const durationNum = Number(formDuration);
 
     const result = serviceSchema.safeParse({
-      title: formTitle,
-      description: formDescription,
+      masterServiceId: formMasterServiceId,
       price: priceNum,
-      priceType: formPriceType,
       durationMinutes: durationNum,
-      serviceType: formServiceType,
     });
 
     if (!result.success) {
@@ -189,12 +158,9 @@ export default function ProviderServices() {
     }
 
     const payload = {
-      title: formTitle.trim(),
-      description: formDescription.trim(),
+      masterServiceId: formMasterServiceId,
       price: priceNum,
-      priceType: formPriceType,
       durationMinutes: durationNum,
-      serviceType: formServiceType,
       images: formImages,
       isActive: formIsActive,
     };
@@ -422,35 +388,14 @@ export default function ProviderServices() {
       >
         <form onSubmit={handleFormSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-              Service Title *
-            </label>
-            <input
-              type="text"
-              value={formTitle}
-              onChange={(e) => setFormTitle(e.target.value)}
-              placeholder="e.g. AC Deep Cleaning & Gas Refill"
-              className="input-field"
-              autoFocus
-            />
-            {formErrors.title && (
-              <p className="mt-1 text-xs text-red-500">{formErrors.title}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-              Description
-            </label>
-            <textarea
-              rows={3}
-              value={formDescription}
-              onChange={(e) => setFormDescription(e.target.value)}
-              placeholder="What does this service include? Mention any parts or tools."
-              className="input-field resize-none"
-            />
-            {formErrors.description && (
-              <p className="mt-1 text-xs text-red-500">{formErrors.description}</p>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">Master service *</label>
+            <select value={formMasterServiceId} onChange={(e) => setFormMasterServiceId(e.target.value)} className="input-field" required>
+              <option value="">Choose a service</option>
+              {masterServices.map((service) => <option key={service._id} value={service._id}>{service.title}</option>)}
+            </select>
+            {formErrors.masterServiceId && <p className="mt-1 text-xs text-red-500">{formErrors.masterServiceId}</p>}
+            {masterServices.find((service) => service._id === formMasterServiceId)?.suggestedPrice > 0 && (
+              <p className="mt-1 text-xs text-slate-500">Suggested price PKR {masterServices.find((service) => service._id === formMasterServiceId).suggestedPrice}. Set your own price below.</p>
             )}
           </div>
 
@@ -472,19 +417,6 @@ export default function ProviderServices() {
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                Price Type
-              </label>
-              <select
-                value={formPriceType}
-                onChange={(e) => setFormPriceType(e.target.value)}
-                className="input-field"
-              >
-                <option value="fixed">Fixed Price</option>
-                <option value="hourly">Hourly Rate</option>
-              </select>
-            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -507,22 +439,6 @@ export default function ProviderServices() {
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                Service Type
-              </label>
-              <select
-                value={formServiceType}
-                onChange={(e) => setFormServiceType(e.target.value)}
-                className="input-field capitalize"
-              >
-                {SERVICE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
 
           {/* Service Images */}

@@ -1,10 +1,8 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { AlertCircle, ArrowRight } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 
 export default function CustomerPaymentCancelled() {
-  const [searchParams] = useSearchParams();
-  const bookingId = searchParams.get("booking_id");
 
   return (
     <CustomerLayout title="Booking Payment Cancelled">

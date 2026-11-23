@@ -2,15 +2,12 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
-  Briefcase,
   CheckCircle2,
   Clock,
   Calendar,
   DollarSign,
   Layers,
   Plus,
-  ShieldAlert,
-  BarChart3,
   UserCheck,
   Users,
 } from "lucide-react";

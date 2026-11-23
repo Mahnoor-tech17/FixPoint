@@ -51,7 +51,8 @@ export default function Register() {
       return;
     }
 
-    const { confirmPassword, ...payload } = result.data;
+    const payload = { ...result.data };
+    delete payload.confirmPassword;
     payload.email = payload.email.toLowerCase();
 
     setLoading(true);

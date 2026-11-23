@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   Calendar, Clock, MapPin, User, AlertCircle,
@@ -47,9 +47,8 @@ export default function ProviderBookings() {
 
   const [actionLoading, setActionLoading] = useState({});
 
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/provider/bookings?scope=${scope}`);
       if (res.data?.success) {
         setBookings(res.data.bookings || []);
@@ -59,9 +58,9 @@ export default function ProviderBookings() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [scope]);
 
-  useEffect(() => { fetchBookings(); }, [scope]);
+  useEffect(() => { void Promise.resolve().then(fetchBookings); }, [fetchBookings]);
 
   const withLoading = (id) => ({ set: (v) => setActionLoading((prev) => ({ ...prev, [id]: v })), get: actionLoading[id] });
 

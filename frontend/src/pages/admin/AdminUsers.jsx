@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -8,15 +8,12 @@ import {
   ChevronRight,
   Edit2,
   Eye,
-  Filter,
   Loader2,
   Mail,
   Phone,
   Plus,
   Search,
-  ShieldAlert,
   Trash2,
-  User,
   Users,
   X,
 } from "lucide-react";
@@ -147,7 +144,7 @@ export default function AdminUsers() {
     return () => clearTimeout(handler);
   }, [search]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       const params = { page, limit };
@@ -163,11 +160,11 @@ export default function AdminUsers() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, limit, roleFilter, debouncedSearch]);
 
   useEffect(() => {
-    fetchUsers();
-  }, [page, roleFilter, debouncedSearch]);
+    void Promise.resolve().then(fetchUsers);
+  }, [fetchUsers]);
 
   const openEditModal = (u) => {
     setEditingUser(u);

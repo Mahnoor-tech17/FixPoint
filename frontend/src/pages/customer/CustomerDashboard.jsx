@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   Calendar,
@@ -7,8 +7,6 @@ import {
   Plus,
   MapPin,
   Star,
-  DollarSign,
-  User,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -25,7 +23,6 @@ export default function CustomerDashboard() {
   const [featuredProviders, setFeaturedProviders] = useState([]);
 
   useEffect(() => {
-    setLoading(true);
     Promise.allSettled([
       httpClient.get("/customer/bookings?scope=upcoming&limit=3"),
       httpClient.get("/public/featured"),

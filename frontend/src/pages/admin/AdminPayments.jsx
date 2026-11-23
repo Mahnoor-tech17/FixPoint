@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   TrendingUp, Clock, CheckCircle2, Loader2, User,
@@ -15,9 +15,8 @@ export default function AdminPayments() {
   const [page, setPage] = useState(1);
   const [markingPaid, setMarkingPaid] = useState({});
 
-  const fetchData = async (pg = 1) => {
+  const fetchData = useCallback(async (pg = 1) => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/admin/payments?page=${pg}&limit=20`);
       if (res.data?.success) {
         setData(res.data);
@@ -29,9 +28,9 @@ export default function AdminPayments() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchData(page); }, [page]);
+  useEffect(() => { void Promise.resolve().then(() => fetchData(page)); }, [page, fetchData]);
 
   const handleMarkPaid = async (providerId, providerName) => {
     setMarkingPaid((prev) => ({ ...prev, [providerId]: true }));

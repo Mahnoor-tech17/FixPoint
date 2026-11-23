@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -25,8 +25,6 @@ import { httpClient, getErrorMessage } from "../../lib/http";
 
 export default function CustomerBookingDetails() {
   const { id } = useParams();
-  const navigate = useNavigate();
-
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -44,8 +42,7 @@ export default function CustomerBookingDetails() {
   const [reviewComment, setReviewComment] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
 
-  const fetchDetails = () => {
-    setLoading(true);
+  const fetchDetails = useCallback(() => {
     httpClient
       .get(`/bookings/${id}`)
       .then((res) => {
@@ -57,11 +54,11 @@ export default function CustomerBookingDetails() {
         toast.error(getErrorMessage(err, "Failed to load booking details"));
       })
       .finally(() => setLoading(false));
-  };
+  }, [id]);
 
   useEffect(() => {
-    fetchDetails();
-  }, [id]);
+    void Promise.resolve().then(fetchDetails);
+  }, [fetchDetails]);
 
   const handleCancelBooking = async () => {
     if (!cancelReason.trim() || cancelReason.trim().length < 3) {
@@ -170,7 +167,7 @@ export default function CustomerBookingDetails() {
     if (booking.status !== "confirmed") return false;
     try {
       const now = new Date();
-      const slotTimeStr = booking.slotStart || booking.startTime || "09:00";
+      const slotTimeStr = booking.slotStart || "09:00";
       const [hours, mins] = slotTimeStr.split(":").map(Number);
       const bookingStart = new Date(`${booking.date}T${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:00`);
       // 1 hour after start
@@ -181,17 +178,17 @@ export default function CustomerBookingDetails() {
     }
   })();
 
-  const providerObj = booking.provider || booking.providerId;
+  const providerObj = booking.provider;
   const items = booking.items?.length > 0 ? booking.items : [
     {
-      title: booking.serviceTitle || "Service",
+      title: booking.items?.map((item) => item.title).join(", ") || "Service",
       price: booking.total || booking.priceSnapshot || booking.price || 0,
       durationMinutes: booking.durationMinutes || 60,
     },
   ];
   const totalAmount = booking.total || booking.priceSnapshot || booking.price || 0;
-  const startTime = booking.slotStart || booking.startTime || "";
-  const endTime = booking.slotEnd || booking.endTime || "";
+  const startTime = booking.slotStart || "";
+  const endTime = booking.slotEnd || "";
   const street = booking.address?.line || booking.customerStreet || "";
   const city = booking.address?.city || booking.customerCity || "";
   const area = booking.address?.area || booking.customerArea || "";

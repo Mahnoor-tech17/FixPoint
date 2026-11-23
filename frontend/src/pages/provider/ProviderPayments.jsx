@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -117,7 +117,6 @@ export default function ProviderPayments() {
 
   const fetchPayments = async (page = 1) => {
     try {
-      setLoading(true);
       const res = await httpClient.get(`/provider/payments?page=${page}&limit=20`);
       setPayments(res.data.payments || []);
       setPagination(res.data.pagination || { total: 0, page: 1, pages: 1 });
@@ -129,7 +128,7 @@ export default function ProviderPayments() {
   };
 
   useEffect(() => {
-    fetchPayments();
+    void Promise.resolve().then(fetchPayments);
   }, []);
 
   return (

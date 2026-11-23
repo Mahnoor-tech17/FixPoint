@@ -5,8 +5,6 @@ import { z } from "zod";
 import {
   AlertCircle,
   Camera,
-  Check,
-  CheckCircle2,
   FileText,
   Loader2,
   Plus,
@@ -67,7 +65,6 @@ export default function ProviderProfile() {
 
   const fetchProfile = async () => {
     try {
-      setLoading(true);
       const res = await httpClient.get("/provider/profile");
       const p = res.data.provider;
       setProvider(p);
@@ -88,7 +85,7 @@ export default function ProviderProfile() {
   };
 
   useEffect(() => {
-    fetchProfile();
+    void Promise.resolve().then(fetchProfile);
   }, []);
 
   const handleAddArea = (e) => {

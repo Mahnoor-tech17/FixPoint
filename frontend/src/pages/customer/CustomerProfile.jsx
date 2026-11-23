@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
-import { User, Lock, Upload, Save, CheckCircle2 } from "lucide-react";
+import { User, Lock, Upload, Save } from "lucide-react";
 import CustomerLayout from "../../components/customer/CustomerLayout";
 import Spinner from "../../components/common/Spinner";
 import PasswordChecklist from "../../components/common/PasswordChecklist";
@@ -69,7 +69,6 @@ export default function CustomerProfile() {
   const [passwordSaving, setPasswordSaving] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
     httpClient
       .get("/customer/profile")
       .then((res) => {

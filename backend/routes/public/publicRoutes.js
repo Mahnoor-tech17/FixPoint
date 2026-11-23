@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getPublicCategories,
+  getActiveMasterServices,
   searchProviders,
   getProviderPublicProfile,
   getProviderSlots,
@@ -12,6 +13,7 @@ const {
 const router = express.Router();
 
 router.get("/categories", getPublicCategories);
+router.get("/master-services", getActiveMasterServices);
 router.get("/search", searchProviders);
 router.get("/featured", getFeaturedProviders);
 router.get("/reviews/latest", getLatestReviews);

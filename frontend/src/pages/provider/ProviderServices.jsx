@@ -393,6 +393,11 @@ export default function ProviderServices() {
               <option value="">Choose a service</option>
               {masterServices.map((service) => <option key={service._id} value={service._id}>{service.title}</option>)}
             </select>
+            {masterServices.length === 0 && (
+              <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                No services are available for your category yet. Please ask the admin to add a master service for your category.
+              </p>
+            )}
             {formErrors.masterServiceId && <p className="mt-1 text-xs text-red-500">{formErrors.masterServiceId}</p>}
             {masterServices.find((service) => service._id === formMasterServiceId)?.suggestedPrice > 0 && (
               <p className="mt-1 text-xs text-slate-500">Suggested price PKR {masterServices.find((service) => service._id === formMasterServiceId).suggestedPrice}. Set your own price below.</p>

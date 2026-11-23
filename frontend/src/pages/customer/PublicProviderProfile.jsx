@@ -42,8 +42,13 @@ export default function PublicProviderProfile({ insideCustomerLayout = false }) 
       .then((res) => {
         if (res.data?.success) {
           setProvider(res.data.provider);
-          setServices(res.data.services || []);
-          setWorkingSchedule(res.data.workingSchedule || null);
+          // Backend services aur working days provider object ke andar bhejta hai
+          setServices(res.data.provider.services || []);
+          setWorkingSchedule(
+            res.data.provider.workingDays?.length
+              ? { workingDays: res.data.provider.workingDays }
+              : null
+          );
         }
       })
       .catch((err) => {
@@ -199,8 +204,10 @@ export default function PublicProviderProfile({ insideCustomerLayout = false }) 
                     <span>Working Hours:</span>
                   </div>
                   <div>
-                    {workingSchedule.workingDays?.join(", ") || "Mon - Sat"} (
-                    {workingSchedule.startTime || "09:00"} - {workingSchedule.endTime || "18:00"})
+                    {workingSchedule.workingDays?.join(", ") || "Mon - Sat"}
+                    {workingSchedule.startTime && workingSchedule.endTime
+                      ? ` (${workingSchedule.startTime} - ${workingSchedule.endTime})`
+                      : ""}
                   </div>
                 </div>
               )}

@@ -651,6 +651,10 @@ const cancelCustomerBooking = async (req, res) => {
           await refundPayment(booking.stripePaymentIntentId, refundAmount);
         } catch (refundErr) {
           console.error("Stripe refund error:", refundErr.message);
+          return res.status(502).json({
+            success: false,
+            message: "Refund could not be processed right now. Your booking was not cancelled. Please try again or contact support.",
+          });
         }
       }
 
@@ -737,6 +741,10 @@ const customerMarksProviderNoShow = async (req, res) => {
         await refundPayment(booking.stripePaymentIntentId);
       } catch (refundErr) {
         console.error("Stripe refund error:", refundErr.message);
+        return res.status(502).json({
+          success: false,
+          message: "Refund could not be processed right now. Please try again or contact support.",
+        });
       }
     }
 

@@ -730,8 +730,11 @@ const cancelProviderBooking = async (req, res) => {
     } else if (booking.status === "confirmed" && booking.stripePaymentIntentId) {
       try {
         await refundPayment(booking.stripePaymentIntentId);
-        if (payment) { payment.status = "refunded"; payment.refundedAt = new Date(); await payment.save(); }
-      } catch (refundErr) { console.error("Stripe refund error:", refundErr.message); }
+      } catch (refundErr) {
+        console.error("Stripe refund error:", refundErr.message);
+        return res.status(502).json({ success: false, message: "Refund to the customer failed. Booking was not cancelled. Please try again." });
+      }
+      if (payment) { payment.status = "refunded"; payment.refundedAt = new Date(); await payment.save(); }
       booking.paymentStatus = "refunded";
     }
 
@@ -945,7 +948,10 @@ const markCustomerNoShow = async (req, res) => {
     if (booking.stripePaymentIntentId && providerAmount > 0) {
       try {
         await refundPayment(booking.stripePaymentIntentId, providerAmount);
-      } catch (stripeErr) { console.error("Stripe partial refund error:", stripeErr.message); }
+      } catch (stripeErr) {
+        console.error("Stripe partial refund error:", stripeErr.message);
+        return res.status(502).json({ success: false, message: "Refund to the customer failed. Please try again." });
+      }
     }
 
     await PaymentModel.findOneAndUpdate({ booking: booking._id }, { status: "refunded", refundedAt: new Date() });

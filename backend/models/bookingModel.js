@@ -55,10 +55,6 @@ const BookingSchema = new mongoose.Schema(
       area: { type: String, trim: true, default: "" },
       city: { type: String, required: true, trim: true },
     },
-    location: {
-      lat: { type: Number },
-      lng: { type: Number },
-    },
 
     // Contact
     phone: { type: String, required: true, trim: true },

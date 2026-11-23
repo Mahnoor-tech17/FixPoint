@@ -58,7 +58,6 @@ export default function ProviderBooking() {
   const [addressArea, setAddressArea] = useState("");
   const [addressCity, setAddressCity] = useState(currentUser?.city || "Lahore");
   const [notes, setNotes] = useState("");
-  const [location, setLocation] = useState(null);
   const [formErrors, setFormErrors] = useState({});
 
   // Submitting
@@ -154,18 +153,6 @@ export default function ProviderBooking() {
     return result.success;
   };
 
-  const captureLocation = () => {
-    if (!navigator.geolocation) {
-      toast.error("Location is not available in this browser");
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => setLocation({ lat: coords.latitude, lng: coords.longitude }),
-      () => toast.error("Could not access your location"),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
   const handleSubmit = async () => {
     setFormErrors({});
     const valResult = detailsSchema.safeParse({ phone, line: addressLine, area: addressArea, city: addressCity, notes });
@@ -187,7 +174,6 @@ export default function ProviderBooking() {
         slotEnd: selectedSlot.endTime,
         phone: phone.trim(),
         address: { line: addressLine.trim(), area: addressArea.trim(), city: addressCity.trim() },
-        location,
         notes: notes ? notes.trim() : "",
       };
 
@@ -502,9 +488,6 @@ export default function ProviderBooking() {
                     <input type="text" value={addressCity} onChange={(e) => setAddressCity(e.target.value)}
                       placeholder="Lahore, Karachi..." className="input-field" />
                     {formErrors.city && <p className="mt-1 text-xs text-red-500">{formErrors.city}</p>}
-                  </div>
-                  <div className="sm:col-span-2">
-                    <button type="button" onClick={captureLocation} className="btn-light justify-center"><MapPin className="h-4 w-4" />{location ? "Location added" : "Add map pin"}</button>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">

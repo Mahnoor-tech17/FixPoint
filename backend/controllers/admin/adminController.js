@@ -1,5 +1,4 @@
-﻿
-const bcrypt = require("bcryptjs");
+﻿const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
  
@@ -817,7 +816,7 @@ const deleteMasterService = async (req, res) => {
 const markProviderPaid = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount } = req.body;
+    const { amount } = req.body || {};
     const provider = await UserModel.findById(id);
     if (!provider || provider.role !== "PROVIDER") return res.status(404).json({ success: false, message: "Provider not found" });
     const paidAmount = Number(amount) || provider.pendingPayout || 0;

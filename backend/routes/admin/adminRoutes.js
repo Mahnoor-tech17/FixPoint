@@ -28,6 +28,7 @@ const {
   updateMasterService,
   deleteMasterService,
   markProviderPaid,
+  refundBookingPayment,
 } = require("../../controllers/admin/adminController");
 
 const router = express.Router();
@@ -58,6 +59,7 @@ router.get("/reports/export-csv", exportBookingsCsv);
 
 router.get("/payments", getPayments);
 router.put("/payments/providers/:id/mark-paid", markProviderPaid);
+router.post("/payments/:id/refund", refundBookingPayment);
 
 // Provider services management
 router.get("/services", getAdminServices);

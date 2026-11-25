@@ -50,6 +50,9 @@ const PaymentSchema = new Schema(
     capturedAt: { type: Date },
     releasedAt: { type: Date },
     refundedAt: { type: Date },
+    refundedAmount: { type: Number, min: 0 },
+    refundReason: { type: String, trim: true, maxlength: 500 },
+    refundedBy: { type: String, enum: ["customer", "provider", "admin", "system"] },
     failedAt: { type: Date },
 
     // Legacy compat

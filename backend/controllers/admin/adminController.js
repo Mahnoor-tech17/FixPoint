@@ -8,6 +8,7 @@ const BookingModel = require("../../models/bookingModel");
 const ReviewModel = require("../../models/reviewModel");
 const PaymentModel = require("../../models/paymentModel");
 const { sendMail } = require("../../services/emailService");
+const { refundPayment } = require("../../services/stripeService");
  
 const SAFE_FIELDS =
   "-password -verificationCode -verificationCodeExpires -resetPasswordToken -resetPasswordTokenExpires";
@@ -829,6 +830,118 @@ const markProviderPaid = async (req, res) => {
   }
 };
 
+
+// ================= ADMIN REFUND =================
+// Admin can refund a captured booking payment (full or partial), e.g. when work was not completed.
+const refundBookingPayment = async (req, res) => {
+  try {
+    const { id } = req.params; // Payment _id
+    const { amount, reason } = req.body || {};
+
+    if (!isValidId(id)) return res.status(400).json({ success: false, message: "Invalid payment id" });
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ success: false, message: "Refund reason is required" });
+    }
+
+    const payment = await PaymentModel.findById(id);
+    if (!payment || payment.type !== "booking_payment" || !payment.booking) {
+      return res.status(404).json({ success: false, message: "Booking payment not found" });
+    }
+    if (payment.status !== "captured") {
+      return res.status(400).json({
+        success: false,
+        message: `Only captured payments can be refunded (this one is ${payment.status}).`,
+      });
+    }
+
+    const booking = await BookingModel.findById(payment.booking).populate("customer provider");
+    if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+    if (!booking.stripePaymentIntentId && !payment.stripePaymentIntentId) {
+      return res.status(400).json({ success: false, message: "No Stripe payment found for this booking" });
+    }
+
+    const total = Number(booking.total) || Number(payment.amount) || 0;
+    const refundAmount = amount === undefined || amount === null || amount === "" ? total : Number(amount);
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0 || refundAmount > total) {
+      return res.status(400).json({
+        success: false,
+        message: `Refund amount must be between 1 and ${total}`,
+      });
+    }
+    const isFullRefund = refundAmount >= total;
+
+    // 1) Stripe first. If it fails, nothing in our database is changed.
+    try {
+      await refundPayment(booking.stripePaymentIntentId || payment.stripePaymentIntentId, isFullRefund ? null : refundAmount);
+    } catch (stripeErr) {
+      console.error("Admin Stripe refund error:", stripeErr.message);
+      return res.status(502).json({
+        success: false,
+        message: `Stripe refund failed: ${stripeErr.message}`,
+      });
+    }
+
+    // 2) Update payment
+    const cleanReason = String(reason).trim().slice(0, 500);
+    payment.status = "refunded";
+    payment.refundedAt = new Date();
+    payment.refundedAmount = refundAmount;
+    payment.refundReason = cleanReason;
+    payment.refundedBy = "admin";
+    await payment.save();
+
+    // 3) Update booking
+    const wasCompleted = booking.status === "completed";
+    booking.paymentStatus = "refunded";
+    if (["confirmed", "on_the_way", "in_progress"].includes(booking.status)) {
+      booking.status = "cancelled";
+      booking.cancelledBy = "admin";
+      booking.cancelReason = `Refunded by admin: ${cleanReason}`.slice(0, 500);
+    }
+    await booking.save();
+
+    // 4) If the provider was already credited (completed booking), take back their share.
+    let payoutNote = "";
+    if (wasCompleted && booking.provider?._id) {
+      const share = Math.round(((Number(booking.providerAmount) || 0) * refundAmount / total) * 100) / 100;
+      const provider = await UserModel.findById(booking.provider._id);
+      if (provider && share > 0) {
+        const deducted = Math.min(provider.pendingPayout || 0, share);
+        provider.pendingPayout = Math.max(0, (provider.pendingPayout || 0) - deducted);
+        await provider.save();
+        const unrecovered = Math.round((share - deducted) * 100) / 100;
+        payoutNote = unrecovered > 0
+          ? ` Rs ${deducted} was deducted from the provider's pending payout. Rs ${unrecovered} was already paid out to the provider and must be recovered manually.`
+          : ` Rs ${deducted} was deducted from the provider's pending payout.`;
+      }
+    }
+
+    // 5) Emails (best effort)
+    if (booking.customer?.email) {
+      sendMail({
+        to: booking.customer.email,
+        subject: `Refund Issued - ${booking.bookingId}`,
+        text: `Hi ${booking.customer.firstName || "there"},\n\nA refund of PKR ${refundAmount} has been issued to your original payment method for booking ${booking.bookingId}.\nReason: ${cleanReason}\n\nIt may take a few business days to appear in your account.\n\nBest regards,\nFixPoint Team`,
+      }).catch(() => {});
+    }
+    if (booking.provider?.email) {
+      sendMail({
+        to: booking.provider.email,
+        subject: `Booking Refunded - ${booking.bookingId}`,
+        text: `Hi ${booking.provider.firstName || "there"},\n\nBooking ${booking.bookingId} was refunded by the FixPoint admin team (PKR ${refundAmount}).\nReason: ${cleanReason}\n\nBest regards,\nFixPoint Team`,
+      }).catch(() => {});
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Refunded Rs ${refundAmount.toLocaleString()} to the customer.${payoutNote}`,
+      payment,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getStats,
   createUser,
@@ -855,4 +968,5 @@ module.exports = {
   updateMasterService,
   deleteMasterService,
   markProviderPaid,
+  refundBookingPayment,
 };

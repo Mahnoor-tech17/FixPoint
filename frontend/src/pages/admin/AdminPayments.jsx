@@ -1,10 +1,11 @@
 import { useCallback, useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Clock, CheckCircle2, Loader2, User,
+  TrendingUp, Clock, CheckCircle2, Loader2, User, RotateCcw, AlertCircle,
 } from "lucide-react";
 import AdminLayout from "../../components/admin/AdminLayout";
 import StatusBadge from "../../components/common/StatusBadge";
+import Modal from "../../components/common/Modal";
 import { httpClient, getErrorMessage } from "../../lib/http";
 
 export default function AdminPayments() {
@@ -14,6 +15,42 @@ export default function AdminPayments() {
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [page, setPage] = useState(1);
   const [markingPaid, setMarkingPaid] = useState({});
+
+  // Refund modal
+  const [refundTarget, setRefundTarget] = useState(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refunding, setRefunding] = useState(false);
+
+  const openRefund = (p) => {
+    setRefundTarget(p);
+    setRefundAmount(String(p.booking?.total ?? p.amount ?? ""));
+    setRefundReason("");
+  };
+
+  const handleRefund = async () => {
+    if (!refundTarget) return;
+    if (!refundReason.trim()) {
+      toast.error("Please enter a reason for the refund.");
+      return;
+    }
+    setRefunding(true);
+    try {
+      const res = await httpClient.post(`/admin/payments/${refundTarget._id}/refund`, {
+        amount: Number(refundAmount),
+        reason: refundReason.trim(),
+      });
+      if (res.data?.success) {
+        toast.success(res.data.message || "Refund issued.");
+        setRefundTarget(null);
+        fetchData(page);
+      }
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Refund failed"));
+    } finally {
+      setRefunding(false);
+    }
+  };
 
   const fetchData = useCallback(async (pg = 1) => {
     try {
@@ -152,6 +189,7 @@ export default function AdminPayments() {
                           <th className="px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Status</th>
                           <th className="px-5 py-3 font-bold text-slate-500 uppercase tracking-wider text-right">Amount</th>
                           <th className="px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                          <th className="px-5 py-3 font-bold text-slate-500 uppercase tracking-wider text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -174,6 +212,20 @@ export default function AdminPayments() {
                             </td>
                             <td className="px-5 py-3 text-slate-500">
                               {new Date(p.createdAt).toLocaleDateString("en-PK")}
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              {p.type === "booking_payment" && p.status === "captured" && p.booking ? (
+                                <button
+                                  onClick={() => openRefund(p)}
+                                  className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                                >
+                                  <RotateCcw className="h-3 w-3" /> Refund
+                                </button>
+                              ) : p.status === "refunded" && p.refundedAmount ? (
+                                <span className="text-[11px] text-slate-400">Refunded Rs {p.refundedAmount.toLocaleString()}</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -204,6 +256,61 @@ export default function AdminPayments() {
           </>
         )}
       </div>
+
+      {refundTarget && (
+        <Modal isOpen onClose={() => !refunding && setRefundTarget(null)} title="Refund Customer">
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-700 space-y-1">
+              <p><span className="font-bold">Booking:</span> {refundTarget.booking?.bookingId || "—"}</p>
+              <p><span className="font-bold">Customer:</span> {refundTarget.user ? `${refundTarget.user.firstName} ${refundTarget.user.lastName}` : "—"}</p>
+              <p><span className="font-bold">Booking status:</span> {(refundTarget.booking?.status || "").replace(/_/g, " ")}</p>
+              <p><span className="font-bold">Paid:</span> Rs {(refundTarget.booking?.total ?? refundTarget.amount ?? 0).toLocaleString()}</p>
+            </div>
+
+            {refundTarget.booking?.status === "completed" && (
+              <div className="rounded-2xl bg-amber-50 p-4 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <p>This booking is already completed. The provider's share will be deducted from their pending payout. If it was already paid out, you must recover it manually.</p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Refund amount (Rs)</label>
+              <input
+                type="number"
+                min="1"
+                max={refundTarget.booking?.total ?? refundTarget.amount}
+                value={refundAmount}
+                onChange={(e) => setRefundAmount(e.target.value)}
+                className="input-field text-xs"
+              />
+              <p className="mt-1 text-[11px] text-slate-400">Leave the full amount for a full refund, or enter a smaller amount for a partial refund.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Reason (required)</label>
+              <textarea
+                rows={2}
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                placeholder="e.g. Work was not completed by the provider"
+                className="input-field text-xs"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              <button onClick={() => setRefundTarget(null)} disabled={refunding}
+                className="rounded-full px-5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+                Close
+              </button>
+              <button onClick={handleRefund} disabled={refunding}
+                className="rounded-full bg-red-600 px-5 py-2 text-xs font-bold text-white hover:bg-red-700 flex items-center gap-2 disabled:opacity-50">
+                {refunding ? <><Loader2 className="h-4 w-4 animate-spin" /> Refunding...</> : "Confirm Refund"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </AdminLayout>
   );
 }

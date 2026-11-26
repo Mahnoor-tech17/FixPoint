@@ -404,7 +404,7 @@ export default function CustomerReviews() {
                   </div>
 
                   <p className="text-sm font-bold text-ink">
-                    {r.bookingId?.serviceTitle || "Service"}
+                    {r.bookingId?.items?.map((i) => i.title).join(", ") || "Service"}
                   </p>
                   <p className="text-xs text-gray-500">
                     Provider:{" "}

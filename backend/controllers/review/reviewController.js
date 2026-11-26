@@ -46,7 +46,7 @@ const createReview = async (req, res) => {
       });
     }
 
-    const booking = await BookingModel.findOne({ _id: bookingId, customerId });
+    const booking = await BookingModel.findOne({ _id: bookingId, customer: customerId });
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
@@ -75,7 +75,7 @@ const createReview = async (req, res) => {
       bookingId: booking._id,
       customerId,
       providerId: booking.provider,
-      serviceId: booking.serviceId,
+      serviceId: booking.items?.[0]?.serviceId,
       rating: ratingNum,
       comment: comment ? comment.trim() : "",
       customerName,
